@@ -1,0 +1,102 @@
+# Kiro Default Configuration
+# Override in ~/.kiro/config/kiro.yaml or via environment variables
+
+# Core settings
+kiro:
+  name: "Kiro"
+  version: "0.1.0"
+
+# Logging configuration
+log:
+  level: INFO                    # DEBUG, INFO, WARNING, ERROR
+  format: json                   # json or console
+  file: null                     # Path to log file, null for stdout only
+  
+# Database configuration
+database:
+  driver: sqlite                 # sqlite or postgresql (future)
+  path: ~/.kiro/data/kiro.db     # SQLite path (~ expanded at runtime)
+  echo: false                    # Log SQL statements (debug)
+
+# Event bus settings
+events:
+  max_queue_size: 1000
+  handler_timeout: 30.0          # seconds
+
+# Daemon settings
+daemon:
+  shutdown_timeout: 5.0          # seconds to wait for graceful shutdown
+
+# ============================================
+# PHASE 1: AUDIO PIPELINE
+# ============================================
+
+# Audio pipeline
+audio:
+  enabled: true                  # Set to false to disable audio
+  sample_rate: 16000
+  channels: 1
+  chunk_duration: 0.1            # seconds per audio chunk
+  input_device: null             # null for system default
+  output_device: null            # null for system default
+  
+  # Wake word detection
+  wake_word:
+    threshold: 0.5               # Detection confidence (0-1)
+    refractory_period: 2.0       # Min seconds between detections
+  
+  # Voice activity detection  
+  vad:
+    aggressiveness: 2            # 0-3, higher = more aggressive filtering
+    min_speech_duration: 0.25    # Min speech to trigger recording
+    max_silence_duration: 0.5    # Silence to end recording (lower = faster)
+  
+  # Speech-to-text
+  stt:
+    engine: auto                 # auto, faster-whisper, or whisper-api
+    model: base                  # faster-whisper: tiny/base/small/medium/large-v3
+    language: en
+    device: auto                 # cuda, cpu, or auto
+    compute_type: float16        # float16, int8_float16, int8
+
+  # Text-to-speech
+  tts:
+    engine: piper                # piper or openai
+    piper_model: en_US-lessac-high  # High quality, natural voice
+    piper_path: null             # Auto-detect
+    models_dir: null             # Auto-detect
+    openai_voice: nova
+
+# ============================================
+# LLM Configuration
+# ============================================
+
+llm:
+  primary_provider: openai       # claude or openai
+  fallback_provider: null
+  claude_model: claude-sonnet-4-20250514
+  openai_model: gpt-4o-mini      # Fast model for responsiveness
+  max_tokens: 256
+  temperature: 0.7
+  timeout: 30.0
+
+# ============================================
+# FUTURE SETTINGS (inactive)
+# ============================================
+
+# Persona settings (Phase 5)
+# personas:
+#   default: default
+#   available:
+#     - default
+#     - taskmaster
+#     - technical
+#     - advisor
+
+# Proactivity settings (Phase 6)
+# proactivity:
+#   morning_briefing:
+#     enabled: true
+#     time: "08:00"
+#   stall_detection:
+#     check_interval: 3600       # seconds

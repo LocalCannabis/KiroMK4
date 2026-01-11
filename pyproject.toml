@@ -1,0 +1,93 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "kiro"
+version = "0.1.0"
+description = "Knowledge Interface & Response Operator — Voice-first AI assistant for executive function support"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.11"
+authors = [
+    {name = "Your Name", email = "you@example.com"}
+]
+keywords = ["ai", "assistant", "voice", "adhd", "executive-function"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Home Automation",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+dependencies = [
+    "pyyaml>=6.0",
+    "pydantic>=2.5",
+    "pydantic-settings>=2.1",
+    "sqlalchemy>=2.0",
+    "alembic>=1.13",
+    "aiosqlite>=0.19",
+    "structlog>=24.1",
+    "python-dotenv>=1.0",
+    "rich>=13.7",
+    # Audio pipeline (Phase 1)
+    "sounddevice>=0.4",
+    "numpy>=1.26",
+    "openwakeword>=0.4",
+    "webrtcvad>=2.0",
+    "openai>=1.10",
+    # Local inference (Performance)
+    "faster-whisper>=1.0",
+    # LLM providers (Phase 2)
+    "anthropic>=0.40",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "pytest-cov>=4.1",
+    "ruff>=0.2",
+    "mypy>=1.8",
+]
+# LLM providers (Phase 2+)
+llm = [
+    "anthropic>=0.18",
+]
+
+[project.scripts]
+kirod = "kiro.main:main"
+
+[project.urls]
+Repository = "https://github.com/yourusername/kiro"
+Documentation = "https://github.com/yourusername/kiro/tree/main/docs"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+python_files = "test_*.py"
+python_functions = "test_*"
+addopts = "-v --tb=short"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "C4", "SIM"]
+ignore = ["E501"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+warn_return_any = true
+warn_unused_configs = true
