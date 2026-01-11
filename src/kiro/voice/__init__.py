@@ -18,6 +18,7 @@ import structlog
 from kiro.audio.pipeline import AudioPipeline, PipelineState
 from kiro.audio.tts import TextToSpeech
 from kiro.conversation.manager import ConversationManager
+from kiro.efe import ExecutiveFunctionEngine
 from kiro.events import Event, EventBus
 from kiro.intent.router import IntentRouter, IntentCategory
 from kiro.llm.gateway import LLMGateway
@@ -62,6 +63,7 @@ class VoicePipeline:
         self._llm: LLMGateway | None = None
         self._intent: IntentRouter | None = None
         self._conversation: ConversationManager | None = None
+        self._efe: ExecutiveFunctionEngine | None = None
 
         self._running = False
 
@@ -113,6 +115,11 @@ class VoicePipeline:
             llm_gateway=self._llm,
         )
 
+        # Initialize Executive Function Engine
+        self._efe = ExecutiveFunctionEngine(
+            on_speak=self._speak_reminder,
+        )
+
         # Register event handlers
         self._register_handlers()
 
@@ -122,6 +129,7 @@ class VoicePipeline:
         await self._llm.start()
         await self._intent.start()
         await self._conversation.start()
+        await self._efe.start()
 
         # Set up intent handlers
         self._setup_intent_handlers()
@@ -191,7 +199,15 @@ class VoicePipeline:
 
         logger.info("processing_utterance", transcript=transcript[:80])
 
-        # Classify intent
+        # Check EFE first for task/reminder intents
+        if self._efe:
+            efe_response = await self._efe.process(transcript)
+            if efe_response:
+                logger.info("efe_handled_intent", response=efe_response[:50])
+                await self._speak_response(efe_response)
+                return
+
+        # Fall through to intent router for other intents
         intent = self._intent.classify(transcript, confidence)
 
         await self.event_bus.emit("intent.classified", {
@@ -239,6 +255,11 @@ class VoicePipeline:
 
         await self.event_bus.emit("tts.completed", {"success": success})
 
+    async def _speak_reminder(self, text: str) -> None:
+        """Speak a reminder (callback for EFE scheduler)."""
+        logger.info("speaking_reminder", text=text[:50])
+        await self._speak_response(text)
+
     async def stop(self) -> None:
         """Stop all pipeline components."""
         if not self._running:
@@ -251,6 +272,9 @@ class VoicePipeline:
         # Note: EventBus handles cleanup on stop
 
         # Stop components in reverse order
+        if self._efe:
+            await self._efe.stop()
+
         if self._conversation:
             await self._conversation.stop()
 
