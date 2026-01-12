@@ -249,6 +249,10 @@ class AudioPipeline:
 
     async def _handle_idle(self, chunk: np.ndarray) -> None:
         """Handle audio in IDLE state - looking for wake word."""
+        # Feed audio to VAD ring buffer even in idle state
+        # This captures pre-wake-word audio for better transcription
+        self._vad.buffer_audio(chunk)
+        
         detection = self._wake_word.process(chunk)
 
         if detection:

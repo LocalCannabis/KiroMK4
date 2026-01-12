@@ -95,6 +95,16 @@ class VoiceActivityDetector:
         self._triggered = False
         self._ring_buffer.clear()
 
+    def buffer_audio(self, audio_chunk: np.ndarray) -> None:
+        """
+        Buffer audio without full VAD processing.
+        
+        Use this during IDLE state to capture pre-wake-word audio
+        so it's available when utterance recording starts.
+        """
+        # Store in ring buffer (speech flag doesn't matter for padding)
+        self._ring_buffer.append((audio_chunk.copy(), False))
+
     def process(self, audio_chunk: np.ndarray) -> dict:
         """
         Process audio chunk for voice activity.
