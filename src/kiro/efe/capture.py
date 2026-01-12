@@ -130,6 +130,8 @@ class CapturePipeline:
         (r"what(?:'?s| is) on my (?:list|tasks?|todo)", CaptureIntent.QUERY_TASKS, 0.95),
         (r"(?:show|list|read)(?: me)?(?: my)? (?:list|tasks?|todos?)", CaptureIntent.QUERY_TASKS, 0.90),
         (r"what do i (?:need|have) to do\b", CaptureIntent.QUERY_TASKS, 0.85),  # \b to avoid matching "do at X"
+        (r"do i have (?:any )?tasks", CaptureIntent.QUERY_TASKS, 0.90),  # "do I have any tasks?"
+        (r"(?:any|what) tasks(?: do i have)?", CaptureIntent.QUERY_TASKS, 0.85),  # "any tasks?" or "what tasks do I have?"
         (r"what(?:'s| is) (?:up|happening) today", CaptureIntent.QUERY_TODAY, 0.85),
         (r"what do i (?:need|have) to do today", CaptureIntent.QUERY_TODAY, 0.95),
         (r"what(?:'s| is) (?:on )?(?:my )?(?:schedule|agenda)(?: (?:for )?today)?", CaptureIntent.QUERY_TODAY, 0.90),
