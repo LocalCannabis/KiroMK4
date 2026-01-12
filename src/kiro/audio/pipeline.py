@@ -201,9 +201,6 @@ class AudioPipeline:
     async def _process_loop(self) -> None:
         """Main processing loop."""
         logger.debug("audio_process_loop_started")
-        
-        chunk_count = 0
-        last_level_log = 0
 
         while self._running:
             try:
@@ -214,20 +211,6 @@ class AudioPipeline:
                     if not self._running:
                         break
                     continue
-
-                chunk_count += 1
-                
-                # Log audio level periodically (every ~5 seconds)
-                if chunk_count - last_level_log >= 50:
-                    rms = float(np.sqrt(np.mean(chunk ** 2)))
-                    peak = float(np.max(np.abs(chunk)))
-                    logger.debug(
-                        "audio_level",
-                        rms=round(rms, 4),
-                        peak=round(peak, 4),
-                        chunks=chunk_count,
-                    )
-                    last_level_log = chunk_count
 
                 # Process based on current state
                 if self._state == PipelineState.IDLE:
