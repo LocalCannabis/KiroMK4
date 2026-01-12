@@ -527,6 +527,53 @@ Tasks can have context tags that affect when they're surfaced:
 | `@low-energy` | When user seems tired or mentions it |
 | `@high-focus` | Only when user has dedicated time |
 
+### 6.4 Merge & Surfacing Logic (Natural Reminder Aggregation)
+
+When a context activates (e.g., user says "I'm going to Superstore"), Kiro should surface relevant pending commitments naturally — not as a robotic list dump, but woven into the response.
+
+**Purpose**: Reduce forgotten errands by merging context-bound items into the moment they become relevant.
+
+**Example Exchange**:
+```
+User: "Hey Kiro, I'm heading to Superstore"
+Kiro: "Will do. Don't forget cream, either."
+       (merges "buy cream" task tagged with errands:Superstore)
+```
+
+#### Merge Rules
+
+| Rule | Behavior |
+|------|----------|
+| **Merge key** | Items grouped by context key (e.g., `errands:Superstore`, `errands:grocery`) |
+| **Status filter** | Only include `pending` or `active` items — never `done` or `cancelled` |
+| **Cooldown** | Don't re-surface the same item within cooldown window (default: 4 hours) |
+| **Deduplication** | If user already mentioned an item in the same request, omit it from nudge |
+| **Ambiguity handling** | If context is ambiguous ("Superstore" vs generic "grocery store"), ask one clarifying question before surfacing |
+
+#### Output Behavior
+
+| Item Count | Response Style |
+|------------|----------------|
+| 0 | No mention (don't say "nothing to get") |
+| 1-2 | Inline nudge: "Don't forget X" or "While you're there, grab X and Y" |
+| 3-5 | Brief summary: "You have a few things for there — want me to list them?" |
+| 6+ | Offer list mode: "You have quite a list for Superstore. Want me to read it out?" |
+
+User can always request full list explicitly: "What do I need from Superstore?" triggers list mode regardless of count.
+
+#### Done Criteria
+
+- [ ] Context activation returns a stable, deterministic set of relevant commitments
+- [ ] Spoken output merges items without duplication
+- [ ] Cooldown prevents repetitive nagging within configured window
+- [ ] "Read me the whole list" switches to full list mode
+
+#### Non-Goals (Phase 1)
+
+- ❌ GPS/geofence-based triggering (requires hardware integration)
+- ❌ Predictive inference ("you might be going to...")
+- ❌ Diary or check-in dependency for context activation
+
 ---
 
 ## 7. Daily Structure
