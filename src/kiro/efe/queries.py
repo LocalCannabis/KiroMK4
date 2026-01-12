@@ -57,6 +57,39 @@ class QueryHandler:
         
         return response
 
+    def query_by_context(self, context: str) -> str:
+        """
+        Find tasks that match a location or context.
+        
+        Searches task titles for mentions of the context.
+        E.g., "Superstore" would match "Buy eggs at Superstore" or
+        "Buy eggs the next time I go to Superstore"
+        """
+        tasks = self.store.get_pending_tasks()
+        context_lower = context.lower()
+        
+        # Find tasks matching this context
+        matching = [
+            t for t in tasks
+            if context_lower in t.title.lower()
+        ]
+        
+        if not matching:
+            return f"I don't have anything on your list for {context}."
+        
+        if len(matching) == 1:
+            return f"Yes! You need to: {matching[0].title}"
+        
+        # Multiple matches
+        response = f"You have {len(matching)} things for {context}. "
+        task_list = [t.title for t in matching[:5]]
+        response += self._format_list(task_list)
+        
+        if len(matching) > 5:
+            response += f" And {len(matching) - 5} more."
+        
+        return response
+
     def query_today(self) -> str:
         """Get tasks and reminders for today."""
         now = datetime.now()

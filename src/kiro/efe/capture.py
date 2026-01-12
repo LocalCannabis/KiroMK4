@@ -26,6 +26,7 @@ class CaptureIntent(Enum):
     QUERY_TASKS = "query_tasks"
     QUERY_TODAY = "query_today"
     QUERY_PROJECT = "query_project"
+    QUERY_CONTEXT = "query_context"  # Query tasks by location/context
     COMPLETE_TASK = "complete_task"
     UNKNOWN = "unknown"
 
@@ -47,6 +48,7 @@ class ParsedCapture:
     # For queries
     project_name: Optional[str] = None
     task_reference: Optional[str] = None
+    context_query: Optional[str] = None  # Location/context for context queries
     
     # Raw extraction
     entities: dict = None
@@ -63,16 +65,24 @@ class CapturePipeline:
     Uses pattern matching for common phrases and time parsing.
     """
 
+    # Question starters - sentences starting with these are likely questions, not commands
+    QUESTION_STARTERS = (
+        "is there", "are there", "do i", "does", "did i", "have i",
+        "can you", "could you", "would you", "will you",
+        "what", "where", "when", "why", "how", "which",
+    )
+
     # Patterns that indicate task creation intent
+    # Note: These should NOT match questions - check is_question() first
     TASK_PATTERNS = [
-        (r"(?:i )?need to (.+)", 0.85),
+        (r"^(?:i )?need to (.+)", 0.85),  # Anchored to start to avoid "anything I need to"
         (r"add (.+) to (?:my )?(?:list|tasks?|todo)", 0.90),
-        (r"(?:i )?have to (.+)", 0.80),
-        (r"(?:i )?(?:gotta|got to) (.+)", 0.80),
-        (r"(?:i )?should (.+)", 0.70),
+        (r"^(?:i )?have to (.+)", 0.80),  # Anchored
+        (r"^(?:i )?(?:gotta|got to) (.+)", 0.80),  # Anchored
+        (r"^(?:i )?should (.+)", 0.70),  # Anchored
         (r"(?:please )?(?:create|make|add) (?:a )?task (?:to |for )?(.+)", 0.95),
         (r"don'?t (?:let me )?forget (?:to )?(.+)", 0.85),
-        (r"remember (?:to |that i need to )?(.+)", 0.75),
+        (r"^remember (?:to |that i need to )?(.+)", 0.75),  # Anchored
     ]
 
     # Patterns that indicate reminder intent
@@ -119,12 +129,26 @@ class CapturePipeline:
     QUERY_PATTERNS = [
         (r"what(?:'?s| is) on my (?:list|tasks?|todo)", CaptureIntent.QUERY_TASKS, 0.95),
         (r"(?:show|list|read)(?: me)?(?: my)? (?:list|tasks?|todos?)", CaptureIntent.QUERY_TASKS, 0.90),
-        (r"what do i (?:need|have) to do", CaptureIntent.QUERY_TASKS, 0.85),
+        (r"what do i (?:need|have) to do\b", CaptureIntent.QUERY_TASKS, 0.85),  # \b to avoid matching "do at X"
         (r"what(?:'s| is) (?:up|happening) today", CaptureIntent.QUERY_TODAY, 0.85),
         (r"what do i (?:need|have) to do today", CaptureIntent.QUERY_TODAY, 0.95),
         (r"what(?:'s| is) (?:on )?(?:my )?(?:schedule|agenda)(?: (?:for )?today)?", CaptureIntent.QUERY_TODAY, 0.90),
         (r"(?:what(?:'s| is) the )?status (?:of|on) (.+)", CaptureIntent.QUERY_PROJECT, 0.90),
         (r"how(?:'s| is) (.+) (?:going|coming along|progressing)", CaptureIntent.QUERY_PROJECT, 0.85),
+    ]
+
+    # Context query patterns - asking about tasks for a specific place/context
+    # These extract a location/context to search task titles
+    # Note: Use (.+) at end of pattern (greedy) since location is the last thing mentioned
+    CONTEXT_QUERY_PATTERNS = [
+        # "is there anything I need to get at Superstore?"
+        (r"(?:is there )?anything (?:i need|i have) to (?:get|do|buy|pick up) (?:at|from|for) (.+)", 0.95),
+        # "do I need anything from Costco?"
+        (r"do i need anything (?:at|from|for) (.+)", 0.95),
+        # "I'm going to Superstore, anything I need?"
+        (r"(?:i'?m going to|heading to|stopping at) ([^,]+),? (?:is there )?(?:anything|something) i (?:need|should get)", 0.90),
+        # "what do I need from the store?"
+        (r"what do i need (?:to get |to buy )?(?:at|from|for) (.+)", 0.90),
     ]
 
     # Completion patterns
@@ -154,10 +178,44 @@ class CapturePipeline:
             (re.compile(p, re.IGNORECASE), intent, conf)
             for p, intent, conf in self.QUERY_PATTERNS
         ]
+        self._context_query_patterns = [
+            (re.compile(p, re.IGNORECASE), conf)
+            for p, conf in self.CONTEXT_QUERY_PATTERNS
+        ]
         self._complete_patterns = [
             (re.compile(p, re.IGNORECASE), conf)
             for p, conf in self.COMPLETE_PATTERNS
         ]
+
+    def _is_question(self, text: str) -> bool:
+        """Check if text appears to be a question rather than a command."""
+        text_lower = text.lower().strip()
+        
+        # Remove wake word if present
+        for wake in ("hey jarvis", "jarvis", "hey kiro", "kiro"):
+            if text_lower.startswith(wake):
+                text_lower = text_lower[len(wake):].strip().lstrip(",").strip()
+                break
+        
+        # Check for question starters
+        for starter in self.QUESTION_STARTERS:
+            if text_lower.startswith(starter):
+                return True
+        
+        # Check for question mark at end
+        if text.rstrip().endswith("?"):
+            return True
+        
+        return False
+
+    def _strip_wake_word(self, text: str) -> str:
+        """Strip wake word prefix from text for pattern matching."""
+        text_lower = text.lower()
+        for wake in ("hey jarvis,", "hey jarvis", "jarvis,", "jarvis", 
+                     "hey kiro,", "hey kiro", "kiro,", "kiro"):
+            if text_lower.startswith(wake):
+                return text[len(wake):].strip()
+        return text
 
     def parse(self, text: str) -> ParsedCapture:
         """
@@ -170,8 +228,23 @@ class CapturePipeline:
             ParsedCapture with detected intent and entities
         """
         text = text.strip()
+        text_no_wake = self._strip_wake_word(text)  # For anchored patterns
+        is_question = self._is_question(text)
         
-        # Check for queries first (they're quick lookups)
+        # Check for context queries first (e.g., "anything I need at Superstore?")
+        for pattern, confidence in self._context_query_patterns:
+            match = pattern.search(text)
+            if match:
+                context = match.group(1).strip().rstrip("?.,!")
+                result = ParsedCapture(
+                    intent=CaptureIntent.QUERY_CONTEXT,
+                    confidence=confidence,
+                    context_query=context,
+                )
+                logger.debug(f"Matched context query: {context}")
+                return result
+        
+        # Check for standard queries (they're quick lookups)
         for pattern, intent, confidence in self._query_patterns:
             match = pattern.search(text)
             if match:
@@ -210,21 +283,23 @@ class CapturePipeline:
                 logger.debug(f"Matched reminder: {message} at {trigger_time}")
                 return result
 
-        # Check for tasks
-        for pattern, confidence in self._task_patterns:
-            match = pattern.search(text)
-            if match:
-                title = match.group(1).strip()
-                # Clean up the title
-                title = self._clean_task_title(title)
-                
-                result = ParsedCapture(
-                    intent=CaptureIntent.TASK,
-                    confidence=confidence,
-                    task_title=title,
-                )
-                logger.debug(f"Matched task: {title}")
-                return result
+        # Check for tasks - BUT skip if this appears to be a question
+        # Use text_no_wake since task patterns may be anchored to start
+        if not is_question:
+            for pattern, confidence in self._task_patterns:
+                match = pattern.search(text_no_wake)
+                if match:
+                    title = match.group(1).strip()
+                    # Clean up the title
+                    title = self._clean_task_title(title)
+                    
+                    result = ParsedCapture(
+                        intent=CaptureIntent.TASK,
+                        confidence=confidence,
+                        task_title=title,
+                    )
+                    logger.debug(f"Matched task: {title}")
+                    return result
 
         # Unknown intent
         logger.debug(f"No intent matched for: {text[:50]}...")

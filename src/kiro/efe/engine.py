@@ -118,6 +118,11 @@ class ExecutiveFunctionEngine:
                 return self.queries.query_project(parsed.project_name)
             return "Which project would you like to know about?"
         
+        elif parsed.intent == CaptureIntent.QUERY_CONTEXT:
+            if parsed.context_query:
+                return self.queries.query_by_context(parsed.context_query)
+            return "I didn't catch where you're going."
+        
         elif parsed.intent == CaptureIntent.COMPLETE_TASK:
             return await self._handle_completion(parsed)
         
