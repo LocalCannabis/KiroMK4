@@ -60,6 +60,16 @@ class ExecutiveFunctionEngine:
         if self._running:
             return
         
+        # Log database state on startup
+        tasks = self.store.get_pending_tasks()
+        reminders = self.store.get_pending_reminders()
+        logger.info(
+            "EFE database loaded",
+            db_path=self.store.db_path,
+            pending_tasks=len(tasks),
+            pending_reminders=len(reminders),
+        )
+        
         await self.scheduler.start()
         self._running = True
         logger.info("Executive Function Engine started")

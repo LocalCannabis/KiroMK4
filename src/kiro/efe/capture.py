@@ -117,7 +117,7 @@ class CapturePipeline:
 
     # Query patterns
     QUERY_PATTERNS = [
-        (r"what(?:'s| is) on my (?:list|tasks?|todo)", CaptureIntent.QUERY_TASKS, 0.95),
+        (r"what(?:'?s| is) on my (?:list|tasks?|todo)", CaptureIntent.QUERY_TASKS, 0.95),
         (r"(?:show|list|read)(?: me)?(?: my)? (?:list|tasks?|todos?)", CaptureIntent.QUERY_TASKS, 0.90),
         (r"what do i (?:need|have) to do", CaptureIntent.QUERY_TASKS, 0.85),
         (r"what(?:'s| is) (?:up|happening) today", CaptureIntent.QUERY_TODAY, 0.85),
