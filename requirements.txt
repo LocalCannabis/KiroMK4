@@ -1,0 +1,15 @@
+# Conda env: kiro_asr (Python 3.12, torch 2.7.1+cu118 pre-installed via conda)
+# Install remaining deps with:
+#   conda run -n kiro_asr pip install -r requirements.txt
+
+numpy>=2.1
+PyYAML>=6.0
+openai>=1.68
+faster-whisper>=1.2
+silero-vad>=5.1
+
+# Audio capture/playback: handled by system arecord/aplay (ALSA via PipeWire).
+# No sounddevice/soundfile needed in dev profile.
+# For portaudio fallback on non-PipeWire systems:
+# sounddevice>=0.4.7
+# soundfile>=0.12.1

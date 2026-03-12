@@ -1,0 +1,152 @@
+version: 1
+profile: workshop-dev
+
+logging:
+  level: INFO
+  file: ./logs/kiro.log
+  max_bytes: 10485760
+  backup_count: 5
+  json: false
+
+audio:
+  input:
+    # alsa_device: 'default' routes through PipeWire to the system default mic.
+    # For direct ALSA access (prod Mackie): hw:1,0
+    alsa_device: "default"
+    device_name: "Logi USB Headset"
+    sample_rate: 16000
+    channels: 1
+    dtype: int16
+    # Silero VAD v5 requires EXACTLY 512 samples per chunk at 16kHz = 32ms.
+    block_ms: 32
+  output:
+    # alsa_device: 'default' routes through PipeWire to the system default speaker.
+    # For direct ALSA access (prod Mackie): hw:1,0
+    alsa_device: "default"
+    device_name: "Logi USB Headset"
+    sample_rate: 22050
+    channels: 1
+
+vad:
+  engine: silero # silero | energy
+  silero:
+    threshold: 0.65
+  energy:
+    rms_threshold: 0.020
+  start_trigger_frames: 8
+  end_silence_ms: 700
+  max_utterance_s: 20
+
+stt:
+  engine: faster_whisper # faster_whisper | openai
+  faster_whisper:
+    # tiny.en: ~0.3s CPU inference (vs small.en ~1.1s) — sufficient for conversational accuracy
+    # Switch back to small.en if accuracy is noticeably poor on noisy input
+    model_size: tiny.en
+    device: cuda
+    compute_type: float16
+    cpu_threads: 8
+    num_workers: 1
+    language: en
+    beam_size: 1
+  openai:
+    model: gpt-4o-mini-transcribe
+
+ai:
+  provider: openai # openai | ollama | llama_cpp
+  timeout_s: 30
+  streaming: true
+  openai:
+    model: gpt-4o
+    temperature: 0.4
+    max_tokens: 80
+    api_key_env: OPENAI_API_KEY
+  ollama:
+    model: mistral:7b-instruct-q4_K_M
+    base_url: http://127.0.0.1:11434
+  llama_cpp:
+    model_path: ./models/llm/llama-3.1-8b-instruct-q4_k_m.gguf
+
+tts:
+  # Primary engine: kokoro (82M-param, 54 voices, 24kHz, Apache 2.0)
+  # Fallback engine: piper (offline, Pi-safe, 22050Hz)
+  # Chatterbox deferred: pkgutil.ImpImporter removed in Python 3.12
+  engine: kokoro # kokoro | piper
+  default_persona: kiro
+
+  kokoro:
+    # GPU confirmed working: RTF 0.023x on RTX 3060 (~118ms/sentence vs ~1171ms CPU).
+    # Requires LD_LIBRARY_PATH from kiro_asr conda activate hook (nvidia_libs.sh).
+    device: cuda
+    speed: 1.0  # global speed multiplier; tune per-persona in code if needed
+    voice_map:
+      kiro:   af_heart    # warm, neutral American female — default assistant voice
+      ops:    am_adam     # flat, efficient American male — technical/code persona
+      sage:   bm_george   # intellectual British male — philosophy/debate
+      finley: bm_lewis    # measured, authoritative British male — finance
+      coach:  am_michael  # energetic American male — fitness/motivation
+      chef:   bf_emma     # warm British female — cooking/recipes
+      doc:    af_nicole   # gentle, soft American female — wellness/mental health
+      ruth:   bf_isabella # warm British female — companion, loving clarity
+
+  # Piper fallback (used when Kokoro unavailable or for Pi deployment)
+  piper_voice_map:
+    kiro:   ./data/voices/en_US-amy-medium.onnx
+    ops:    ./data/voices/en_US-amy-medium.onnx
+    sage:   ./data/voices/en_US-lessac-high.onnx
+    finley: ./data/voices/en_US-lessac-high.onnx
+    chef:   ./data/voices/en_US-lessac-high.onnx
+    coach:  ./data/voices/en_US-amy-medium.onnx
+    doc:    ./data/voices/en_US-lessac-high.onnx
+    ruth:   ./data/voices/en_US-lessac-high.onnx
+  piper:
+    executable: /home/macklemoron/Projects/KiroMKIII/bin/piper/piper
+    output_sample_rate: 22050
+
+  openai:
+    model: gpt-4o-mini-tts
+    voice: alloy
+
+router:
+  default_persona: kiro
+  mode: keywords # keywords | model
+  keyword_map:
+    finley: [finley, finlay, budget, money, spending, rent, debt, finance, finances, financial]
+    chef: [chef, cook, recipe, ingredient, meal, grocery, food, eating]
+    coach: [coach, workout, gym, protein, diet, fitness, exercise, training]
+    doc: [doc, stress, anxiety, feeling, overwhelmed, sad, mental, therapy, emotions]
+    ruth: [ruth, companion, presence, lonely, lost, heart, connection, honest, truth, clarity]
+    sage: [sage, philosophy, debate, challenge, meaning, ethics, logic]
+    ops: [ops, code, bug, server, deploy, flask, sqlite, python, linux, terminal]
+
+memory:
+  enabled: true
+  sqlite_path: ./data/kiro.db
+  vector:
+    provider: chroma # chroma | lancedb
+    path: ./data/chroma
+    embedding_provider: sentence_transformers # sentence_transformers | openai
+    embedding_model: all-MiniLM-L6-v2
+  retrieval:
+    top_k: 5
+  privacy:
+    local_only: true
+    include_memories_in_cloud_prompts: true
+
+tools:
+  enabled: true
+  allow_list: [timer, note, list, calendar, weather, calculate]
+
+offline:
+  cloud_failover_order: [openai, ollama, pi]
+  cloud_timeout_s: 8
+  local_timeout_s: 20
+
+sync:
+  enabled: false
+  workshop_host: 192.168.1.10
+  api_port: 8765
+
+observability:
+  metrics_enabled: false
+  health_check_s: 60
