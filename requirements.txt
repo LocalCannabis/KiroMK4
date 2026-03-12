@@ -8,6 +8,12 @@ openai>=1.68
 faster-whisper>=1.2
 silero-vad>=5.1
 
+# Google API integrations
+google-api-python-client>=2.100
+google-auth-httplib2>=0.2
+google-auth-oauthlib>=1.0
+python-dateutil>=2.8
+
 # Audio capture/playback: handled by system arecord/aplay (ALSA via PipeWire).
 # No sounddevice/soundfile needed in dev profile.
 # For portaudio fallback on non-PipeWire systems:

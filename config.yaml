@@ -135,7 +135,27 @@ memory:
 
 tools:
   enabled: true
-  allow_list: [timer, note, list, calendar, weather, calculate]
+  allow_list:
+    - timer
+    - note
+    - list
+    - calendar
+    - weather
+    - calculate
+    # Google integrations
+    - create_calendar_event
+    - list_calendar_events
+    - create_budget
+    - add_expense
+    - get_budget_summary
+    - update_budget_item
+    - read_emails
+    - send_email
+    - draft_email
+    - search_emails
+    - create_doc
+    - append_to_doc
+    - read_doc
 
 offline:
   cloud_failover_order: [openai, ollama, pi]

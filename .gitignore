@@ -11,3 +11,4 @@ models/
 *.onnx
 *.gguf
 .DS_Store
+credentials/
