@@ -30,3 +30,4 @@ __pycache__/
 *.pyc
 data/chroma/
 data/voices/*.onnx
+.claude/

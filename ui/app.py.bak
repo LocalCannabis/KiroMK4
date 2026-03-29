@@ -1,0 +1,254 @@
+"""
+KIRO UI — Flask Application
+Serves the chat interface and provides API endpoints for
+session management, message history, and LLM completion proxy.
+"""
+
+import os
+import json
+import requests
+from datetime import datetime, timezone
+from flask import Flask, render_template, request, jsonify, Response, stream_with_context
+from models import db, ChatSession, ChatMessage
+from config import DATABASE_URL, SECRET_KEY, PERSONAS, PERSONA_ORDER
+
+app = Flask(__name__)
+app.config["SECRET_KEY"] = SECRET_KEY
+app.config["SQLALCHEMY_DATABASE_URI"] = DATABASE_URL
+app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
+
+db.init_app(app)
+
+# ---------------------------------------------------------------------------
+# LLM Configuration — uses OpenRouter by default.
+# Override with env vars to point at any OpenAI-compatible endpoint.
+# ---------------------------------------------------------------------------
+LLM_API_URL = os.getenv("KIRO_LLM_URL", "https://openrouter.ai/api/v1/chat/completions")
+LLM_API_KEY = os.getenv("KIRO_LLM_KEY", "")
+LLM_MODEL = os.getenv("KIRO_LLM_MODEL", "anthropic/claude-sonnet-4")
+
+
+# ---------------------------------------------------------------------------
+# Database init
+# ---------------------------------------------------------------------------
+with app.app_context():
+    db.create_all()
+
+
+# ---------------------------------------------------------------------------
+# Page routes
+# ---------------------------------------------------------------------------
+@app.route("/")
+def index():
+    return render_template(
+        "index.html",
+        personas=PERSONAS,
+        persona_order=PERSONA_ORDER,
+    )
+
+
+# ---------------------------------------------------------------------------
+# API — Personas
+# ---------------------------------------------------------------------------
+@app.route("/api/personas")
+def api_personas():
+    ordered = []
+    for key in PERSONA_ORDER:
+        p = PERSONAS[key].copy()
+        p["key"] = key
+        ordered.append(p)
+    return jsonify(ordered)
+
+
+# ---------------------------------------------------------------------------
+# API — Sessions
+# ---------------------------------------------------------------------------
+@app.route("/api/sessions/<persona_key>")
+def api_sessions(persona_key):
+    sessions = (
+        ChatSession.query.filter_by(persona_key=persona_key, archived=False)
+        .order_by(ChatSession.updated_at.desc())
+        .all()
+    )
+    return jsonify([s.to_dict(message_count=True) for s in sessions])
+
+
+@app.route("/api/sessions", methods=["POST"])
+def api_create_session():
+    data = request.get_json()
+    persona_key = data.get("persona_key")
+    if persona_key not in PERSONAS:
+        return jsonify({"error": "Unknown persona"}), 400
+
+    session = ChatSession(
+        persona_key=persona_key,
+        title=data.get("title", "New Session"),
+    )
+    db.session.add(session)
+    db.session.commit()
+    return jsonify(session.to_dict()), 201
+
+
+@app.route("/api/sessions/<int:session_id>", methods=["PATCH"])
+def api_update_session(session_id):
+    session = ChatSession.query.get_or_404(session_id)
+    data = request.get_json()
+    if "title" in data:
+        session.title = data["title"][:200]
+    if "archived" in data:
+        session.archived = bool(data["archived"])
+    db.session.commit()
+    return jsonify(session.to_dict())
+
+
+@app.route("/api/sessions/<int:session_id>", methods=["DELETE"])
+def api_delete_session(session_id):
+    session = ChatSession.query.get_or_404(session_id)
+    db.session.delete(session)
+    db.session.commit()
+    return jsonify({"ok": True})
+
+
+# ---------------------------------------------------------------------------
+# API — Messages
+# ---------------------------------------------------------------------------
+@app.route("/api/messages/<int:session_id>")
+def api_messages(session_id):
+    ChatSession.query.get_or_404(session_id)
+    messages = (
+        ChatMessage.query.filter_by(session_id=session_id)
+        .order_by(ChatMessage.created_at)
+        .all()
+    )
+    return jsonify([m.to_dict() for m in messages])
+
+
+# ---------------------------------------------------------------------------
+# API — Chat completion (streaming)
+# ---------------------------------------------------------------------------
+@app.route("/api/chat", methods=["POST"])
+def api_chat():
+    data = request.get_json()
+    session_id = data.get("session_id")
+    user_content = data.get("content", "").strip()
+
+    if not user_content:
+        return jsonify({"error": "Empty message"}), 400
+
+    session = ChatSession.query.get_or_404(session_id)
+    persona = PERSONAS.get(session.persona_key)
+    if not persona:
+        return jsonify({"error": "Unknown persona"}), 400
+
+    # Save user message
+    user_msg = ChatMessage(
+        session_id=session_id, role="user", content=user_content
+    )
+    db.session.add(user_msg)
+    db.session.commit()
+
+    # Auto-title: use first message as session title
+    if session.title == "New Session":
+        session.title = user_content[:100]
+        db.session.commit()
+
+    # Build conversation history for LLM
+    history = (
+        ChatMessage.query.filter_by(session_id=session_id)
+        .order_by(ChatMessage.created_at)
+        .all()
+    )
+
+    llm_messages = [{"role": "system", "content": persona["system_prompt"]}]
+    for msg in history:
+        llm_messages.append({"role": msg.role, "content": msg.content})
+
+    # If no API key configured, return a placeholder
+    if not LLM_API_KEY:
+        placeholder = (
+            f"[{persona['name']} is listening but no LLM API key is configured. "
+            f"Set KIRO_LLM_KEY environment variable to connect.]"
+        )
+        assistant_msg = ChatMessage(
+            session_id=session_id, role="assistant", content=placeholder
+        )
+        db.session.add(assistant_msg)
+        session.updated_at = datetime.now(timezone.utc)
+        db.session.commit()
+        return jsonify({"message": assistant_msg.to_dict(), "streamed": False})
+
+    # Stream from LLM
+    def generate():
+        full_response = []
+        try:
+            resp = requests.post(
+                LLM_API_URL,
+                headers={
+                    "Authorization": f"Bearer {LLM_API_KEY}",
+                    "Content-Type": "application/json",
+                    "HTTP-Referer": "http://localhost:5199",
+                    "X-Title": "KIRO",
+                },
+                json={
+                    "model": LLM_MODEL,
+                    "messages": llm_messages,
+                    "stream": True,
+                    "max_tokens": 4096,
+                },
+                stream=True,
+                timeout=60,
+            )
+            resp.raise_for_status()
+
+            for line in resp.iter_lines():
+                if not line:
+                    continue
+                line = line.decode("utf-8")
+                if not line.startswith("data: "):
+                    continue
+                payload = line[6:]
+                if payload.strip() == "[DONE]":
+                    break
+                try:
+                    chunk = json.loads(payload)
+                    delta = chunk.get("choices", [{}])[0].get("delta", {})
+                    token = delta.get("content", "")
+                    if token:
+                        full_response.append(token)
+                        yield f"data: {json.dumps({'token': token})}\n\n"
+                except json.JSONDecodeError:
+                    continue
+
+        except Exception as e:
+            error_text = f"[Connection error: {str(e)}]"
+            full_response.append(error_text)
+            yield f"data: {json.dumps({'token': error_text})}\n\n"
+
+        # Save complete assistant message
+        complete = "".join(full_response)
+        if complete:
+            with app.app_context():
+                assistant_msg = ChatMessage(
+                    session_id=session_id, role="assistant", content=complete
+                )
+                db.session.add(assistant_msg)
+                session.updated_at = datetime.now(timezone.utc)
+                db.session.commit()
+                yield f"data: {json.dumps({'done': True, 'message_id': assistant_msg.id})}\n\n"
+
+    return Response(
+        stream_with_context(generate()),
+        mimetype="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+# ---------------------------------------------------------------------------
+# Run (used by launcher or standalone)
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    from config import FLASK_PORT
+    app.run(host="127.0.0.1", port=FLASK_PORT, debug=True)

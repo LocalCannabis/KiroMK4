@@ -1,0 +1,2049 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>KIRO</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
+<style>
+/* ================================================================
+   KIRO HUD — Jarvis / Minority Report Design System
+   ================================================================
+
+   Transparent overlay rendered inside a GTK borderless window.
+   Everything floats on glass.
+*/
+
+:root {
+    /* ── Core palette ── */
+    --hud-blue:       #00B4FF;
+    --hud-blue-dim:   #0080B8;
+    --hud-blue-glow:  rgba(0, 180, 255, 0.35);
+    --hud-blue-ghost: rgba(0, 180, 255, 0.08);
+    --hud-cyan:       #00E5FF;
+    --hud-amber:      #FFB300;
+    --hud-red:        #FF3D3D;
+    --hud-green:      #4ADE80;
+
+    --glass-bg:       rgba(4, 12, 24, 0.82);
+    --glass-surface:  rgba(8, 20, 40, 0.65);
+    --glass-hover:    rgba(0, 180, 255, 0.06);
+    --glass-active:   rgba(0, 180, 255, 0.10);
+    --glass-border:   rgba(0, 180, 255, 0.15);
+    --glass-border-hi: rgba(0, 180, 255, 0.30);
+
+    --text-hi:   rgba(255, 255, 255, 0.95);
+    --text-mid:  rgba(180, 200, 220, 0.80);
+    --text-lo:   rgba(120, 150, 180, 0.50);
+    --text-data: var(--hud-blue);
+
+    --font-ui:   'Inter', -apple-system, sans-serif;
+    --font-data: 'JetBrains Mono', monospace;
+
+    --radius: 8px;
+    --radius-pill: 21px;
+}
+
+/* ================================================================
+   Reset
+   ================================================================ */
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html, body {
+    height: 100%;
+    overflow: hidden;
+    background: transparent;
+    color: var(--text-hi);
+    font-family: var(--font-ui);
+    font-size: 13px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+    user-select: none;
+}
+
+::-webkit-scrollbar { width: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--glass-border); border-radius: 2px; }
+
+/* ================================================================
+   PILL STATE — Collapsed capsule
+   ================================================================ */
+
+#pill {
+    width: 140px;
+    height: 42px;
+    border-radius: var(--radius-pill);
+    background: var(--glass-bg);
+    border: 1px solid var(--glass-border);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    cursor: pointer;
+    transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+    position: relative;
+    overflow: hidden;
+    box-shadow:
+        0 0 20px rgba(0, 180, 255, 0.08),
+        inset 0 1px 0 rgba(255, 255, 255, 0.03);
+}
+
+#pill::before {
+    content: '';
+    position: absolute;
+    inset: -1px;
+    border-radius: var(--radius-pill);
+    background: linear-gradient(135deg, rgba(0, 180, 255, 0.2), transparent 50%);
+    opacity: 0;
+    transition: opacity 0.3s;
+}
+
+#pill:hover {
+    border-color: var(--glass-border-hi);
+    box-shadow:
+        0 0 30px rgba(0, 180, 255, 0.15),
+        inset 0 1px 0 rgba(255, 255, 255, 0.05);
+}
+
+#pill:hover::before { opacity: 1; }
+
+.pill-indicator {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--hud-blue);
+    box-shadow: 0 0 8px var(--hud-blue-glow);
+    animation: pulseGlow 3s ease-in-out infinite;
+    position: relative;
+    z-index: 1;
+}
+
+.pill-indicator.has-notification {
+    background: var(--hud-amber);
+    box-shadow: 0 0 8px rgba(255, 179, 0, 0.5);
+    animation: pulseAmber 1.5s ease-in-out infinite;
+}
+
+@keyframes pulseGlow {
+    0%, 100% { opacity: 1; box-shadow: 0 0 8px var(--hud-blue-glow); }
+    50% { opacity: 0.6; box-shadow: 0 0 4px var(--hud-blue-glow); }
+}
+
+@keyframes pulseAmber {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
+}
+
+.pill-label {
+    font-family: var(--font-data);
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.2em;
+    color: var(--hud-blue);
+    position: relative;
+    z-index: 1;
+}
+
+.pill-status {
+    font-family: var(--font-data);
+    font-size: 9px;
+    color: var(--text-lo);
+    position: relative;
+    z-index: 1;
+    letter-spacing: 0.05em;
+}
+
+/* ================================================================
+   PANEL STATE — Expanded HUD
+   ================================================================ */
+
+#panel {
+    display: none;
+    width: 520px;
+    height: 780px;
+    border-radius: 12px;
+    background: var(--glass-bg);
+    border: 1px solid var(--glass-border);
+    flex-direction: column;
+    overflow: hidden;
+    position: relative;
+    box-shadow:
+        0 0 40px rgba(0, 180, 255, 0.06),
+        0 25px 60px rgba(0, 0, 0, 0.4),
+        inset 0 1px 0 rgba(255, 255, 255, 0.03);
+}
+
+/* ── Corner brackets (Jarvis targeting aesthetic) ── */
+#panel::before, #panel::after {
+    content: '';
+    position: absolute;
+    width: 16px;
+    height: 16px;
+    z-index: 10;
+    pointer-events: none;
+}
+#panel::before {
+    top: 6px; left: 6px;
+    border-top: 1px solid var(--hud-blue);
+    border-left: 1px solid var(--hud-blue);
+}
+#panel::after {
+    top: 6px; right: 6px;
+    border-top: 1px solid var(--hud-blue);
+    border-right: 1px solid var(--hud-blue);
+}
+
+/* Bottom brackets via panel-inner */
+.panel-bracket-bl, .panel-bracket-br {
+    position: absolute;
+    width: 16px;
+    height: 16px;
+    z-index: 10;
+    pointer-events: none;
+}
+.panel-bracket-bl {
+    bottom: 6px; left: 6px;
+    border-bottom: 1px solid var(--hud-blue);
+    border-left: 1px solid var(--hud-blue);
+}
+.panel-bracket-br {
+    bottom: 6px; right: 6px;
+    border-bottom: 1px solid var(--hud-blue);
+    border-right: 1px solid var(--hud-blue);
+}
+
+/* ── Scan-line overlay ── */
+.scanline-overlay {
+    position: absolute;
+    inset: 0;
+    background: repeating-linear-gradient(
+        0deg,
+        transparent,
+        transparent 2px,
+        rgba(0, 180, 255, 0.008) 2px,
+        rgba(0, 180, 255, 0.008) 4px
+    );
+    pointer-events: none;
+    z-index: 99;
+    border-radius: 12px;
+}
+
+/* ================================================================
+   Title Bar (drag handle)
+   ================================================================ */
+
+#title-bar {
+    display: flex;
+    align-items: center;
+    padding: 10px 16px;
+    gap: 10px;
+    border-bottom: 1px solid var(--glass-border);
+    cursor: grab;
+    flex-shrink: 0;
+    position: relative;
+}
+
+#title-bar:active { cursor: grabbing; }
+
+.title-indicator {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--hud-blue);
+    box-shadow: 0 0 6px var(--hud-blue-glow);
+    flex-shrink: 0;
+}
+
+.title-text {
+    font-family: var(--font-data);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.18em;
+    color: var(--hud-blue);
+    flex: 1;
+}
+
+.title-time {
+    font-family: var(--font-data);
+    font-size: 10px;
+    color: var(--text-lo);
+    letter-spacing: 0.05em;
+}
+
+.title-collapse {
+    width: 24px;
+    height: 24px;
+    border-radius: 4px;
+    border: 1px solid var(--glass-border);
+    background: transparent;
+    color: var(--text-lo);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 11px;
+    font-family: var(--font-data);
+    transition: all 0.15s;
+}
+
+.title-collapse:hover {
+    border-color: var(--hud-blue);
+    color: var(--hud-blue);
+    background: var(--glass-hover);
+}
+
+/* ================================================================
+   Persona Rail (horizontal, below title bar)
+   ================================================================ */
+
+#persona-strip {
+    display: flex;
+    align-items: center;
+    padding: 8px 12px;
+    gap: 4px;
+    border-bottom: 1px solid var(--glass-border);
+    flex-shrink: 0;
+    overflow-x: auto;
+}
+
+.persona-chip {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    padding: 5px 10px;
+    border-radius: var(--radius-pill);
+    border: 1px solid transparent;
+    background: transparent;
+    cursor: pointer;
+    transition: all 0.15s;
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+
+.persona-chip:hover {
+    background: var(--glass-hover);
+    border-color: var(--glass-border);
+}
+
+.persona-chip.active {
+    background: var(--glass-active);
+    border-color: var(--hud-blue);
+}
+
+.persona-chip .chip-avatar {
+    font-size: 14px;
+}
+
+.persona-chip .chip-name {
+    font-family: var(--font-data);
+    font-size: 10px;
+    font-weight: 500;
+    letter-spacing: 0.1em;
+    color: var(--text-mid);
+}
+
+.persona-chip.active .chip-name {
+    color: var(--hud-blue);
+}
+
+.persona-chip .chip-badge {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--hud-amber);
+    box-shadow: 0 0 4px rgba(255, 179, 0, 0.5);
+    display: none;
+}
+
+/* ================================================================
+   Tab Bar
+   ================================================================ */
+
+#tab-bar {
+    display: flex;
+    align-items: center;
+    padding: 0 12px;
+    border-bottom: 1px solid var(--glass-border);
+    flex-shrink: 0;
+}
+
+.tab-btn {
+    padding: 8px 14px;
+    border: none;
+    background: transparent;
+    color: var(--text-lo);
+    font-family: var(--font-data);
+    font-size: 10px;
+    font-weight: 500;
+    letter-spacing: 0.12em;
+    cursor: pointer;
+    position: relative;
+    transition: color 0.15s;
+}
+
+.tab-btn:hover { color: var(--text-mid); }
+
+.tab-btn.active {
+    color: var(--hud-blue);
+}
+
+.tab-btn.active::after {
+    content: '';
+    position: absolute;
+    bottom: 0;
+    left: 14px;
+    right: 14px;
+    height: 1px;
+    background: var(--hud-blue);
+    box-shadow: 0 0 6px var(--hud-blue-glow);
+}
+
+.tab-spacer { flex: 1; }
+
+.tab-settings-btn {
+    width: 26px;
+    height: 26px;
+    border-radius: 4px;
+    border: 1px solid var(--glass-border);
+    background: transparent;
+    color: var(--text-lo);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 13px;
+    transition: all 0.15s;
+}
+
+.tab-settings-btn:hover {
+    border-color: var(--hud-blue);
+    color: var(--hud-blue);
+}
+
+/* ================================================================
+   Content Area
+   ================================================================ */
+
+#content {
+    flex: 1;
+    overflow: hidden;
+    position: relative;
+}
+
+.tab-view {
+    display: none;
+    flex-direction: column;
+    height: 100%;
+    overflow: hidden;
+}
+
+.tab-view.active {
+    display: flex;
+}
+
+/* ── Chat view ── */
+
+#chat-messages {
+    flex: 1;
+    overflow-y: auto;
+    padding: 14px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    background: var(--glass-bg);  /* explicit bg prevents compositor ghost artifacts */
+}
+
+.chat-msg {
+    max-width: 88%;
+    padding: 8px 12px;
+    border-radius: var(--radius);
+    font-size: 13px;
+    line-height: 1.6;
+    word-wrap: break-word;
+    animation: msgSlide 0.2s ease-out;
+}
+
+@keyframes msgSlide {
+    from { opacity: 0; transform: translateY(4px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+.chat-msg.user {
+    align-self: flex-end;
+    background: rgba(0, 180, 255, 0.08);
+    border: 1px solid rgba(0, 180, 255, 0.12);
+    color: var(--text-hi);
+}
+
+.chat-msg.assistant {
+    align-self: flex-start;
+    background: transparent;
+    color: var(--text-hi);
+}
+
+.chat-msg.assistant .msg-persona {
+    font-family: var(--font-data);
+    font-size: 10px;
+    font-weight: 500;
+    letter-spacing: 0.1em;
+    color: var(--hud-blue);
+    margin-bottom: 3px;
+}
+
+/* Markdown-ish */
+.chat-msg p { margin-bottom: 6px; }
+.chat-msg p:last-child { margin-bottom: 0; }
+.chat-msg code {
+    font-family: var(--font-data);
+    font-size: 11.5px;
+    background: rgba(0, 180, 255, 0.06);
+    padding: 1px 4px;
+    border-radius: 3px;
+    color: var(--hud-cyan);
+}
+.chat-msg pre {
+    background: rgba(0, 0, 0, 0.3);
+    border: 1px solid var(--glass-border);
+    border-radius: 4px;
+    padding: 8px 10px;
+    overflow-x: auto;
+    margin: 6px 0;
+}
+.chat-msg pre code { background: none; padding: 0; font-size: 11px; color: var(--text-mid); }
+.chat-msg strong { font-weight: 600; color: var(--text-hi); }
+.chat-msg em { font-style: italic; color: var(--text-mid); }
+.chat-msg ul, .chat-msg ol { margin: 4px 0; padding-left: 18px; }
+.chat-msg li { margin-bottom: 2px; }
+.chat-msg h3, .chat-msg h4 {
+    font-family: var(--font-data);
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+    color: var(--hud-blue);
+    margin: 8px 0 4px;
+}
+
+.streaming-cursor::after {
+    content: '▊';
+    color: var(--hud-blue);
+    animation: blink 0.8s step-end infinite;
+}
+
+@keyframes blink {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0; }
+}
+
+/* Chat welcome */
+.chat-welcome {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    text-align: center;
+    padding: 30px;
+}
+
+.chat-welcome .welcome-avatar { font-size: 36px; }
+.chat-welcome .welcome-name {
+    font-family: var(--font-data);
+    font-size: 16px;
+    font-weight: 600;
+    letter-spacing: 0.15em;
+    color: var(--hud-blue);
+}
+.chat-welcome .welcome-role {
+    font-size: 12px;
+    color: var(--text-lo);
+}
+.chat-welcome .welcome-msg {
+    font-size: 13px;
+    color: var(--text-mid);
+    max-width: 360px;
+    margin-top: 4px;
+    line-height: 1.6;
+}
+
+/* Session strip at top of chat */
+#session-strip {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 12px;
+    border-bottom: 1px solid var(--glass-border);
+    overflow-x: auto;
+    flex-shrink: 0;
+}
+
+.session-chip {
+    padding: 4px 10px;
+    border-radius: var(--radius-pill);
+    border: 1px solid var(--glass-border);
+    background: transparent;
+    color: var(--text-lo);
+    font-family: var(--font-data);
+    font-size: 10px;
+    cursor: pointer;
+    transition: all 0.15s;
+    white-space: nowrap;
+    max-width: 140px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.session-chip:hover { border-color: var(--hud-blue-dim); color: var(--text-mid); }
+.session-chip.active { border-color: var(--hud-blue); color: var(--hud-blue); background: var(--glass-active); }
+
+.session-new-btn {
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    border: 1px dashed var(--glass-border);
+    background: transparent;
+    color: var(--text-lo);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 12px;
+    flex-shrink: 0;
+    transition: all 0.15s;
+}
+
+.session-new-btn:hover {
+    border-color: var(--hud-blue);
+    color: var(--hud-blue);
+    border-style: solid;
+}
+
+/* ── Briefing view ── */
+
+#briefing-view {
+    padding: 16px;
+    overflow-y: auto;
+    background: var(--glass-bg);
+}
+
+.briefing-card {
+    background: var(--glass-surface);
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius);
+    padding: 14px 16px;
+    margin-bottom: 10px;
+}
+
+.briefing-card .card-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+}
+
+.briefing-card .card-indicator {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+}
+
+.briefing-card .card-label {
+    font-family: var(--font-data);
+    font-size: 10px;
+    font-weight: 500;
+    letter-spacing: 0.1em;
+    color: var(--text-lo);
+}
+
+.briefing-card .card-time {
+    font-family: var(--font-data);
+    font-size: 10px;
+    color: var(--text-lo);
+    margin-left: auto;
+}
+
+.briefing-card .card-body {
+    font-size: 13px;
+    line-height: 1.6;
+    color: var(--text-mid);
+}
+
+.briefing-card .card-body p { margin-bottom: 6px; }
+.briefing-card .card-body p:last-child { margin-bottom: 0; }
+.briefing-card .card-body strong { color: var(--text-hi); }
+
+.briefing-empty {
+    text-align: center;
+    padding: 40px 20px;
+    color: var(--text-lo);
+    font-size: 12px;
+}
+
+.briefing-generate-btn {
+    display: block;
+    margin: 0 auto;
+    padding: 8px 20px;
+    border-radius: var(--radius-pill);
+    border: 1px solid var(--glass-border);
+    background: var(--glass-hover);
+    color: var(--hud-blue);
+    font-family: var(--font-data);
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0.08em;
+    cursor: pointer;
+    transition: all 0.15s;
+    margin-top: 12px;
+}
+
+.briefing-generate-btn:hover {
+    background: var(--glass-active);
+    border-color: var(--hud-blue);
+}
+
+/* ── Settings view ── */
+
+#settings-view {
+    padding: 16px;
+    overflow-y: auto;
+    background: var(--glass-bg);
+}
+
+.settings-group {
+    margin-bottom: 16px;
+}
+
+.settings-group-label {
+    font-family: var(--font-data);
+    font-size: 10px;
+    font-weight: 500;
+    letter-spacing: 0.12em;
+    color: var(--text-lo);
+    margin-bottom: 8px;
+    padding-bottom: 4px;
+    border-bottom: 1px solid var(--glass-border);
+}
+
+.settings-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 6px 0;
+}
+
+.settings-row .setting-label {
+    font-size: 12px;
+    color: var(--text-mid);
+}
+
+.settings-row .setting-value {
+    font-family: var(--font-data);
+    font-size: 11px;
+    color: var(--hud-blue);
+}
+
+.settings-row select, .settings-row input {
+    background: var(--glass-surface);
+    border: 1px solid var(--glass-border);
+    border-radius: 4px;
+    color: var(--text-hi);
+    font-family: var(--font-data);
+    font-size: 11px;
+    padding: 4px 8px;
+    outline: none;
+}
+
+.settings-row select:focus, .settings-row input:focus {
+    border-color: var(--hud-blue);
+}
+
+.settings-row select option {
+    background: #0a1628;
+}
+
+.setting-control {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.settings-row input[type="range"] {
+    -webkit-appearance: none;
+    width: 110px;
+    height: 3px;
+    background: var(--glass-border-hi);
+    border: none;
+    border-radius: 2px;
+    outline: none;
+    padding: 0;
+    cursor: pointer;
+    flex-shrink: 0;
+}
+
+.settings-row input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 13px;
+    height: 13px;
+    border-radius: 50%;
+    background: var(--hud-blue);
+    cursor: pointer;
+    box-shadow: 0 0 6px var(--hud-blue-glow);
+    border: 1px solid var(--hud-blue-dim);
+    transition: box-shadow 0.15s;
+}
+
+.settings-row input[type="range"]:hover::-webkit-slider-thumb {
+    box-shadow: 0 0 12px var(--hud-blue);
+}
+
+/* ================================================================
+   Input Area
+   ================================================================ */
+
+#input-area {
+    padding: 10px 14px 12px;
+    border-top: 1px solid var(--glass-border);
+    flex-shrink: 0;
+}
+
+#input-wrap {
+    display: flex;
+    align-items: flex-end;
+    gap: 8px;
+    background: var(--glass-surface);
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius);
+    padding: 4px 4px 4px 12px;
+    transition: border-color 0.2s;
+}
+
+#input-wrap:focus-within {
+    border-color: var(--hud-blue);
+    box-shadow: 0 0 12px rgba(0, 180, 255, 0.08);
+}
+
+#hud-input {
+    flex: 1;
+    background: none;
+    border: none;
+    outline: none;
+    color: var(--text-hi);
+    font-family: var(--font-ui);
+    font-size: 13px;
+    line-height: 1.4;
+    resize: none;
+    max-height: 100px;
+    padding: 6px 0;
+}
+
+#hud-input::placeholder {
+    color: var(--text-lo);
+}
+
+#hud-send-btn, #hud-mic-btn {
+    width: 30px;
+    height: 30px;
+    border-radius: 6px;
+    border: 1px solid var(--hud-blue-dim);
+    background: rgba(0, 180, 255, 0.1);
+    color: var(--hud-blue);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    transition: all 0.15s;
+}
+
+#hud-send-btn:hover, #hud-mic-btn:hover {
+    background: rgba(0, 180, 255, 0.2);
+    border-color: var(--hud-blue);
+    box-shadow: 0 0 10px var(--hud-blue-glow);
+}
+
+#hud-send-btn:disabled {
+    opacity: 0.25;
+    cursor: not-allowed;
+    box-shadow: none;
+}
+
+#hud-send-btn svg, #hud-mic-btn svg {
+    width: 14px;
+    height: 14px;
+}
+
+/* Mic button recording state */
+#hud-mic-btn.recording {
+    border-color: var(--hud-red, #FF3B44);
+    background: rgba(255, 59, 68, 0.2);
+    color: var(--hud-red, #FF3B44);
+    box-shadow: 0 0 12px rgba(255, 59, 68, 0.3);
+    animation: mic-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes mic-pulse {
+    0%, 100% { box-shadow: 0 0 12px rgba(255, 59, 68, 0.3); }
+    50%      { box-shadow: 0 0 20px rgba(255, 59, 68, 0.5); }
+}
+
+#hud-mic-btn.processing {
+    border-color: var(--hud-amber, #FFB800);
+    background: rgba(255, 184, 0, 0.15);
+    color: var(--hud-amber, #FFB800);
+    animation: mic-process 0.6s linear infinite;
+}
+
+@keyframes mic-process {
+    0%   { opacity: 1; }
+    50%  { opacity: 0.5; }
+    100% { opacity: 1; }
+}
+
+/* ================================================================
+   Catchup notification dot on pill
+   ================================================================ */
+
+.notification-dot {
+    position: absolute;
+    top: 8px;
+    right: 14px;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--hud-amber);
+    box-shadow: 0 0 6px rgba(255, 179, 0, 0.6);
+    display: none;
+    z-index: 5;
+}
+
+/* ================================================================
+   Animations
+   ================================================================ */
+
+@keyframes fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+
+@keyframes slideDown {
+    from { opacity: 0; transform: translateY(-8px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+#panel.entering {
+    animation: fadeIn 0.2s ease-out;
+}
+</style>
+</head>
+<body>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     PILL STATE — collapsed capsule
+     ═══════════════════════════════════════════════════════════════ -->
+
+<div id="pill" onclick="expandPanel()">
+    <span class="pill-indicator" id="pill-indicator"></span>
+    <span class="pill-label">KIRO</span>
+    <span class="pill-status" id="pill-status">READY</span>
+    <div class="notification-dot" id="pill-notify-dot"></div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     PANEL STATE — expanded HUD
+     ═══════════════════════════════════════════════════════════════ -->
+
+<div id="panel">
+    <div class="scanline-overlay"></div>
+    <div class="panel-bracket-bl"></div>
+    <div class="panel-bracket-br"></div>
+
+    <!-- Title bar / drag handle -->
+    <div id="title-bar">
+        <span class="title-indicator"></span>
+        <span class="title-text">KIRO</span>
+        <span class="title-time" id="title-time">--:--</span>
+        <button class="title-collapse" onclick="collapsePanel()" title="Collapse">⌃</button>
+    </div>
+
+    <!-- Persona strip -->
+    <div id="persona-strip"></div>
+
+    <!-- Tab bar -->
+    <div id="tab-bar">
+        <button class="tab-btn active" data-tab="chat" onclick="switchTab('chat')">CHAT</button>
+        <button class="tab-btn" data-tab="briefing" onclick="switchTab('briefing')">BRIEFING</button>
+        <button class="tab-btn" data-tab="settings" onclick="switchTab('settings')">SETTINGS</button>
+    </div>
+
+    <!-- Content -->
+    <div id="content">
+        <!-- CHAT TAB -->
+        <div class="tab-view active" id="tab-chat">
+            <div id="session-strip"></div>
+            <div id="chat-messages">
+                <div class="chat-welcome" id="chat-welcome">
+                    <div class="welcome-avatar" id="w-avatar">⚡</div>
+                    <div class="welcome-name" id="w-name">KIRO</div>
+                    <div class="welcome-role" id="w-role">Chief of Staff</div>
+                    <div class="welcome-msg" id="w-msg">What do you need, Tim?</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- BRIEFING TAB -->
+        <div class="tab-view" id="tab-briefing">
+            <div id="briefing-view">
+                <div class="briefing-empty" id="briefing-empty">
+                    <p style="font-size:20px;margin-bottom:8px">⚡</p>
+                    <p>No briefings yet today.</p>
+                    <button class="briefing-generate-btn" onclick="generateCatchup()">GENERATE CATCHUP</button>
+                </div>
+                <div id="briefing-content" style="display:none"></div>
+            </div>
+        </div>
+
+        <!-- SETTINGS TAB -->
+        <div class="tab-view" id="tab-settings">
+            <div id="settings-view">
+
+                <div class="settings-group">
+                    <div class="settings-group-label">APPEARANCE</div>
+                    <div class="settings-row">
+                        <span class="setting-label">Opacity</span>
+                        <div class="setting-control">
+                            <input type="range" id="setting-opacity" min="10" max="100" value="100"
+                                   oninput="updateOpacity(this.value)">
+                            <span class="setting-value" id="setting-opacity-val">100%</span>
+                        </div>
+                    </div>
+                    <div class="settings-row">
+                        <span class="setting-label">Window zoom</span>
+                        <div class="setting-control">
+                            <input type="range" id="setting-zoom" min="1.0" max="3.0" step="0.25" value="2.0"
+                                   oninput="previewZoom(this.value)"
+                                   onchange="commitZoom(this.value)">
+                            <span class="setting-value" id="setting-zoom-val">2.0×</span>
+                        </div>
+                    </div>
+                    <div class="settings-row">
+                        <span class="setting-label">Font scale</span>
+                        <div class="setting-control">
+                            <input type="range" id="setting-font" min="75" max="150" step="5" value="100"
+                                   oninput="updateFontScale(this.value)">
+                            <span class="setting-value" id="setting-font-val">100%</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="settings-group">
+                    <div class="settings-group-label">OVERLAY</div>
+                    <div class="settings-row">
+                        <span class="setting-label">Position</span>
+                        <select id="setting-position" onchange="updatePosition(this.value)">
+                            <option value="tr" selected>Top Right</option>
+                            <option value="tl">Top Left</option>
+                            <option value="br">Bottom Right</option>
+                            <option value="bl">Bottom Left</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="settings-group">
+                    <div class="settings-group-label">MODEL</div>
+                    <div class="settings-row">
+                        <span class="setting-label">LLM</span>
+                        <span class="setting-value" id="setting-model">gpt-4o</span>
+                    </div>
+                    <div class="settings-row">
+                        <span class="setting-label">Temperature</span>
+                        <span class="setting-value" id="setting-temp">0.4</span>
+                    </div>
+                </div>
+
+                <div class="settings-group">
+                    <div class="settings-group-label">PERSONAS</div>
+                    <div id="settings-persona-list"></div>
+                </div>
+
+                <div class="settings-group">
+                    <div class="settings-group-label">STATUS</div>
+                    <div class="settings-row">
+                        <span class="setting-label">UI Server</span>
+                        <span class="setting-value" style="color:var(--hud-green)">● CONNECTED</span>
+                    </div>
+                    <div class="settings-row">
+                        <span class="setting-label">Voice Server</span>
+                        <span class="setting-value" id="setting-voice-status" style="color:var(--text-lo)">● CHECKING</span>
+                    </div>
+                    <div class="settings-row">
+                        <span class="setting-label">Knowledge sources</span>
+                        <span class="setting-value" id="setting-knowledge">—</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Input area -->
+    <div id="input-area">
+        <div id="input-wrap">
+            <textarea id="hud-input" rows="1" placeholder="Talk to KIRO..."></textarea>
+            <button id="hud-mic-btn" title="Hold to talk / Click to toggle recording">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path>
+                    <path d="M19 10v2a7 7 0 0 1-14 0v-2"></path>
+                    <line x1="12" y1="19" x2="12" y2="23"></line>
+                    <line x1="8" y1="23" x2="16" y2="23"></line>
+                </svg>
+            </button>
+            <button id="hud-send-btn" disabled>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                    <line x1="12" y1="19" x2="12" y2="5"></line>
+                    <polyline points="5 12 12 5 19 12"></polyline>
+                </svg>
+            </button>
+        </div>
+    </div>
+</div>
+
+<script>
+/* ================================================================
+   KIRO HUD — Client Logic
+   ================================================================ */
+
+const PERSONAS = {{ personas | tojson }};
+const PERSONA_ORDER = {{ persona_order | tojson }};
+
+/* ── State ── */
+const S = {
+    expanded: false,
+    persona: null,
+    session: null,
+    sessions: {},
+    streaming: false,
+    tab: 'chat',
+    hasNotification: false,
+};
+
+/* ── DOM refs ── */
+const $pill       = document.getElementById('pill');
+const $panel      = document.getElementById('panel');
+const $pillInd    = document.getElementById('pill-indicator');
+const $pillStatus = document.getElementById('pill-status');
+const $pillDot    = document.getElementById('pill-notify-dot');
+const $titleTime  = document.getElementById('title-time');
+const $personaStrip = document.getElementById('persona-strip');
+const $sessionStrip = document.getElementById('session-strip');
+const $chatMessages = document.getElementById('chat-messages');
+const $hudInput     = document.getElementById('hud-input');
+const $hudSendBtn   = document.getElementById('hud-send-btn');
+const $hudMicBtn    = document.getElementById('hud-mic-btn');
+
+
+/* ================================================================
+   Pill ↔ Panel transitions
+   ================================================================ */
+
+function postToGTK(msg) {
+    try {
+        window.webkit.messageHandlers.kiro.postMessage(JSON.stringify(msg));
+    } catch(e) {
+        // Running in normal browser — ignore
+        console.debug('GTK bridge unavailable:', e);
+    }
+}
+
+function expandPanel() {
+    if (S.expanded) return;
+    S.expanded = true;
+    S.hasNotification = false;
+    $pillDot.style.display = 'none';
+    $pill.style.display = 'none';        // hide pill immediately
+    postToGTK({ action: 'expand' });     // GTK resizes, then calls revealPanel()
+    // Panel is NOT shown here — GTK calls revealPanel() after resize completes
+}
+
+// Called by GTK (via run_javascript) after window resize has settled.
+function revealPanel() {
+    $panel.style.display = 'flex';
+    $panel.classList.add('entering');
+    setTimeout(() => $panel.classList.remove('entering'), 200);
+    $hudInput.focus();
+    if (!S.persona) selectPersona('kiro');
+}
+
+function collapsePanel() {
+    S.expanded = false;
+    $panel.style.display = 'none';
+    $pill.style.display = 'flex';
+    postToGTK({ action: 'collapse' });
+}
+
+
+/* ================================================================
+   Window drag — delta approach (no GTK mouse grab)
+   ================================================================ */
+
+function initDrag() {
+    const handle = document.getElementById('title-bar');
+    // Sends drag_start to GTK which calls begin_move_drag — WM handles the rest.
+    // No delta tracking, no polling, no drag_end needed.
+    handle.addEventListener('mousedown', e => {
+        if (e.target.closest('.title-collapse')) return;
+        e.preventDefault();
+        handle.style.cursor = 'grabbing';
+        postToGTK({ action: 'drag_start', x: e.clientX, y: e.clientY });
+    });
+    document.addEventListener('mouseup', () => { handle.style.cursor = 'grab'; });
+}
+
+
+/* ================================================================
+   Persona selection
+   ================================================================ */
+
+function buildPersonaStrip() {
+    $personaStrip.innerHTML = PERSONA_ORDER.map(key => {
+        const p = PERSONAS[key];
+        return `
+            <button class="persona-chip" data-persona="${key}" onclick="selectPersona('${key}')">
+                <span class="chip-avatar">${p.avatar}</span>
+                <span class="chip-name">${p.name}</span>
+                <span class="chip-badge"></span>
+            </button>
+        `;
+    }).join('');
+}
+
+function selectPersona(key) {
+    if (S.streaming) return;
+    S.persona = key;
+    S.session = null;
+
+    const p = PERSONAS[key];
+
+    // Update strip
+    document.querySelectorAll('.persona-chip').forEach(c => {
+        c.classList.toggle('active', c.dataset.persona === key);
+    });
+
+    // Update placeholder
+    $hudInput.placeholder = `Talk to ${p.name}...`;
+
+    // Show welcome
+    showWelcome(p);
+
+    // Load sessions
+    loadSessions(key);
+}
+
+function showWelcome(p) {
+    // Always rebuild — renderMessages() can evict #chat-welcome from the DOM,
+    // leaving getElementById returning null and causing a silent TypeError.
+    $chatMessages.innerHTML = `
+        <div class="chat-welcome" id="chat-welcome">
+            <div class="welcome-avatar" id="w-avatar">${p.avatar}</div>
+            <div class="welcome-name" id="w-name">${p.name}</div>
+            <div class="welcome-role" id="w-role">${p.role}</div>
+            <div class="welcome-msg" id="w-msg">${p.greeting}</div>
+        </div>`;
+}
+
+function createWelcomeEl(p) {
+    const d = document.createElement('div');
+    d.className = 'chat-welcome';
+    d.id = 'chat-welcome';
+    d.innerHTML = `
+        <div class="welcome-avatar">${p.avatar}</div>
+        <div class="welcome-name">${p.name}</div>
+        <div class="welcome-role">${p.role}</div>
+        <div class="welcome-msg">${p.greeting}</div>
+    `;
+    return d;
+}
+
+
+/* ================================================================
+   Sessions
+   ================================================================ */
+
+async function loadSessions(personaKey) {
+    try {
+        const resp = await fetch(`/api/sessions/${personaKey}`);
+        const sessions = await resp.json();
+        S.sessions[personaKey] = sessions;
+        renderSessionStrip(sessions);
+    } catch(e) {
+        console.error('loadSessions:', e);
+    }
+}
+
+function renderSessionStrip(sessions) {
+    const chips = sessions.slice(0, 8).map(s => {
+        const isActive = S.session === s.id;
+        return `<button class="session-chip ${isActive ? 'active' : ''}"
+                        onclick="selectSession(${s.id})"
+                        title="${esc(s.title)}">${esc(s.title)}</button>`;
+    }).join('');
+
+    $sessionStrip.innerHTML = chips +
+        `<button class="session-new-btn" onclick="createSession()" title="New session">+</button>`;
+}
+
+async function selectSession(id) {
+    if (S.streaming) return;
+    S.session = id;
+
+    const sessions = S.sessions[S.persona] || [];
+    renderSessionStrip(sessions);
+
+    try {
+        const resp = await fetch(`/api/messages/${id}`);
+        const msgs = await resp.json();
+        renderMessages(msgs);
+    } catch(e) {
+        console.error('selectSession:', e);
+    }
+}
+
+async function createSession() {
+    if (!S.persona || S.streaming) return;
+    try {
+        const resp = await fetch('/api/sessions', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ persona_key: S.persona }),
+        });
+        const session = await resp.json();
+        await loadSessions(S.persona);
+        selectSession(session.id);
+    } catch(e) {
+        console.error('createSession:', e);
+    }
+}
+
+
+/* ================================================================
+   Messages
+   ================================================================ */
+
+function renderMessages(messages) {
+    if (!messages.length) {
+        showWelcome(PERSONAS[S.persona]);
+        return;
+    }
+
+    const p = PERSONAS[S.persona];
+    $chatMessages.innerHTML = messages.map(m => renderMsg(m, p)).join('');
+    scrollChat();
+}
+
+function renderMsg(msg, persona) {
+    if (msg.role === 'user') {
+        return `<div class="chat-msg user">${fmtContent(msg.content)}</div>`;
+    }
+    return `
+        <div class="chat-msg assistant">
+            <div class="msg-persona">${persona.name}</div>
+            <span class="msg-content">${fmtContent(msg.content)}</span>
+        </div>`;
+}
+
+function appendMsg(role, content, persona) {
+    const welcome = document.getElementById('chat-welcome');
+    if (welcome) welcome.style.display = 'none';
+
+    const div = document.createElement('div');
+    div.className = `chat-msg ${role}`;
+
+    if (role === 'assistant') {
+        div.innerHTML = `<div class="msg-persona">${persona.name}</div><span class="msg-content"></span>`;
+    } else {
+        div.innerHTML = fmtContent(content);
+    }
+
+    $chatMessages.appendChild(div);
+    scrollChat();
+    return div;
+}
+
+function scrollChat() {
+    requestAnimationFrame(() => {
+        $chatMessages.scrollTop = $chatMessages.scrollHeight;
+    });
+}
+
+
+/* ================================================================
+   Send & Stream
+   ================================================================ */
+
+async function sendMessage() {
+    const content = $hudInput.value.trim();
+    if (!content || S.streaming || !S.persona) return;
+
+    // Auto-create session
+    if (!S.session) {
+        try {
+            const resp = await fetch('/api/sessions', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ persona_key: S.persona }),
+            });
+            const session = await resp.json();
+            S.session = session.id;
+            await loadSessions(S.persona);
+            renderSessionStrip(S.sessions[S.persona] || []);
+        } catch(e) { console.error(e); return; }
+    }
+
+    const persona = PERSONAS[S.persona];
+    appendMsg('user', content, persona);
+    $hudInput.value = '';
+    autoResize();
+    updateSend();
+
+    const assistDiv = appendMsg('assistant', '', persona);
+    const span = assistDiv.querySelector('.msg-content');
+    span.classList.add('streaming-cursor');
+
+    S.streaming = true;
+    $hudSendBtn.disabled = true;
+    $pillStatus.textContent = 'THINKING';
+
+    try {
+        const resp = await fetch('/api/chat', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ session_id: S.session, content }),
+        });
+
+        const contentType = resp.headers.get('content-type') || '';
+        if (contentType.includes('text/event-stream')) {
+            await streamResponse(resp, span);
+        } else {
+            const data = await resp.json();
+            if (data.message) span.innerHTML = fmtContent(data.message.content);
+        }
+    } catch(e) {
+        span.innerHTML = fmtContent(`[Error: ${e.message}]`);
+    }
+
+    span.classList.remove('streaming-cursor');
+    S.streaming = false;
+    $pillStatus.textContent = 'READY';
+    updateSend();
+    await loadSessions(S.persona);
+}
+
+async function streamResponse(resp, span) {
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let fullText = '';
+
+    while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+            if (!line.startsWith('data: ')) continue;
+            try {
+                const data = JSON.parse(line.slice(6));
+                if (data.token) {
+                    fullText += data.token;
+                    span.innerHTML = fmtContent(fullText);
+                    scrollChat();
+                }
+            } catch(e) {}
+        }
+    }
+}
+
+
+/* ================================================================
+   Briefing / Catchup
+   ================================================================ */
+
+async function generateCatchup() {
+    const $empty = document.getElementById('briefing-empty');
+    const $content = document.getElementById('briefing-content');
+
+    $empty.style.display = 'none';
+    $content.style.display = 'block';
+    $content.innerHTML = '<div class="briefing-card"><div class="card-body"><span class="streaming-cursor" id="briefing-stream"></span></div></div>';
+
+    const span = document.getElementById('briefing-stream');
+
+    try {
+        const resp = await fetch('/api/catchup', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ persona_key: S.persona || 'kiro' }),
+        });
+
+        const reader = resp.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        let fullText = '';
+
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split('\n');
+            buffer = lines.pop() || '';
+
+            for (const line of lines) {
+                if (!line.startsWith('data: ')) continue;
+                try {
+                    const data = JSON.parse(line.slice(6));
+                    if (data.token) {
+                        fullText += data.token;
+                        span.innerHTML = fmtContent(fullText);
+                    }
+                } catch(e) {}
+            }
+        }
+
+        span.classList.remove('streaming-cursor');
+
+        // Wrap in proper card format
+        const now = new Date();
+        const timeStr = now.toLocaleTimeString('en-CA', { hour: '2-digit', minute: '2-digit' });
+        $content.innerHTML = `
+            <div class="briefing-card">
+                <div class="card-header">
+                    <span class="card-indicator" style="background:var(--hud-blue);box-shadow:0 0 4px var(--hud-blue-glow)"></span>
+                    <span class="card-label">CATCHUP</span>
+                    <span class="card-time">${timeStr}</span>
+                </div>
+                <div class="card-body">${fmtContent(fullText)}</div>
+            </div>
+        `;
+
+    } catch(e) {
+        $content.innerHTML = `<div class="briefing-card"><div class="card-body" style="color:var(--hud-red)">[Error: ${e.message}]</div></div>`;
+    }
+}
+
+
+/* ================================================================
+   Tabs
+   ================================================================ */
+
+function switchTab(tab) {
+    S.tab = tab;
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
+    document.querySelectorAll('.tab-view').forEach(v => v.classList.toggle('active', v.id === `tab-${tab}`));
+}
+
+
+/* ================================================================
+   Formatting
+   ================================================================ */
+
+function fmtContent(text) {
+    let html = esc(text);
+    html = html.replace(/```(\w*)\n([\s\S]*?)```/g, (_, lang, code) => `<pre><code>${code.trim()}</code></pre>`);
+    html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
+    html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+    html = html.replace(/\*([^*]+)\*/g, '<em>$1</em>');
+    html = html.replace(/^### (.+)$/gm, '<h3>$1</h3>');
+    html = html.replace(/^#### (.+)$/gm, '<h4>$1</h4>');
+    html = html.replace(/\n\n+/g, '</p><p>');
+    html = html.replace(/\n/g, '<br>');
+    return `<p>${html}</p>`;
+}
+
+function esc(str) {
+    const d = document.createElement('div');
+    d.textContent = str;
+    return d.innerHTML;
+}
+
+
+/* ================================================================
+   Input Handling
+   ================================================================ */
+
+function autoResize() {
+    $hudInput.style.height = 'auto';
+    $hudInput.style.height = Math.min($hudInput.scrollHeight, 100) + 'px';
+}
+
+function updateSend() {
+    $hudSendBtn.disabled = !$hudInput.value.trim() || S.streaming;
+}
+
+$hudInput.addEventListener('input', () => { autoResize(); updateSend(); });
+$hudInput.addEventListener('keydown', e => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        sendMessage();
+    }
+});
+$hudSendBtn.addEventListener('click', sendMessage);
+
+
+/* ================================================================
+   Clock
+   ================================================================ */
+
+function updateClock() {
+    const now = new Date();
+    $titleTime.textContent = now.toLocaleTimeString('en-CA', {
+        hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false
+    });
+}
+setInterval(updateClock, 1000);
+updateClock();
+
+
+/* ================================================================
+   Settings — live controls
+   ================================================================ */
+
+function updateOpacity(val) {
+    const pct = parseInt(val);
+    // GTK set_opacity is compositor-level — no WebKit repaint, instant effect
+    postToGTK({ action: 'set_opacity', value: pct / 100 });
+    document.getElementById('setting-opacity-val').textContent = pct + '%';
+    const el = document.getElementById('setting-opacity');
+    const fraction = (pct - parseInt(el.min)) / (parseInt(el.max) - parseInt(el.min)) * 100;
+    el.style.background = `linear-gradient(to right, var(--hud-blue) ${fraction}%, var(--glass-border-hi) ${fraction}%)`;
+}
+
+// While dragging: only update the label and track fill, no GTK calls
+function previewZoom(val) {
+    const zoom = parseFloat(val);
+    document.getElementById('setting-zoom-val').textContent = zoom.toFixed(2).replace(/\.?0+$/, '') + '×';
+    const el = document.getElementById('setting-zoom');
+    const fraction = (zoom - parseFloat(el.min)) / (parseFloat(el.max) - parseFloat(el.min)) * 100;
+    el.style.background = `linear-gradient(to right, var(--hud-blue) ${fraction}%, var(--glass-border-hi) ${fraction}%)`;
+}
+
+// On release: send the final value to GTK once
+function commitZoom(val) {
+    previewZoom(val);
+    postToGTK({ action: 'set_zoom', value: parseFloat(val) });
+}
+
+function updateFontScale(val) {
+    const pct = parseInt(val);
+    const scale = pct / 100;
+    // Scale content text independently of window zoom — only affects the
+    // inner content area, not window chrome (title bar, persona strip, tabs)
+    document.getElementById('content').style.fontSize = scale + 'em';
+    document.getElementById('chat-messages').style.fontSize = scale + 'em';
+    document.getElementById('input-area').style.fontSize = scale + 'em';
+    document.getElementById('setting-font-val').textContent = pct + '%';
+    const el = document.getElementById('setting-font');
+    const fraction = (pct - parseInt(el.min)) / (parseInt(el.max) - parseInt(el.min)) * 100;
+    el.style.background = `linear-gradient(to right, var(--hud-blue) ${fraction}%, var(--glass-border-hi) ${fraction}%)`;
+}
+
+function updatePosition(val) {
+    postToGTK({ action: 'set_position', value: val });
+}
+
+// Init all slider track fills on load
+function initSettings() {
+    const opacityEl = document.getElementById('setting-opacity');
+    if (opacityEl) updateOpacity(opacityEl.value);
+    const zoomEl = document.getElementById('setting-zoom');
+    if (zoomEl) previewZoom(zoomEl.value);
+    const fontEl = document.getElementById('setting-font');
+    if (fontEl) updateFontScale(fontEl.value);
+}
+
+
+/* ================================================================
+   Voice server health check
+   ================================================================ */
+
+async function checkVoiceHealth() {
+    const el = document.getElementById('setting-voice-status');
+    try {
+        const resp = await fetch('/api/voice/health');
+        const data = await resp.json();
+        if (data.available) {
+            el.style.color = 'var(--hud-green)';
+            el.textContent = '● CONNECTED';
+            $hudMicBtn.style.display = 'flex';
+        } else {
+            el.style.color = 'var(--hud-red, #FF3B44)';
+            el.textContent = '● OFFLINE';
+            $hudMicBtn.title = 'Voice server offline — start kiro_server first';
+        }
+    } catch(e) {
+        el.style.color = 'var(--hud-red, #FF3B44)';
+        el.textContent = '● ERROR';
+    }
+}
+
+
+/* ================================================================
+   Keyboard shortcuts
+   ================================================================ */
+
+document.addEventListener('keydown', e => {
+    // Escape — collapse
+    if (e.key === 'Escape' && S.expanded) {
+        collapsePanel();
+        return;
+    }
+
+    // Ctrl+1..7 — switch persona
+    if (e.ctrlKey && e.key >= '1' && e.key <= '7') {
+        e.preventDefault();
+        const idx = parseInt(e.key) - 1;
+        if (PERSONA_ORDER[idx]) selectPersona(PERSONA_ORDER[idx]);
+    }
+
+    // Ctrl+N — new session
+    if (e.ctrlKey && e.key === 'n') {
+        e.preventDefault();
+        createSession();
+    }
+
+    // Ctrl+B — briefing tab
+    if (e.ctrlKey && e.key === 'b') {
+        e.preventDefault();
+        switchTab('briefing');
+    }
+
+    // Ctrl+M — toggle mic recording
+    if (e.ctrlKey && e.key === 'm') {
+        e.preventDefault();
+        if (Voice.processing || S.streaming) return;
+        if (Voice.recording) {
+            Voice.stopRecording();
+        } else {
+            Voice.startRecording();
+        }
+    }
+});
+
+
+/* ================================================================
+   Proactive catchup polling
+   ================================================================ */
+
+async function checkCatchup() {
+    if (document.hidden) return;
+    try {
+        const resp = await fetch('/api/catchup/check');
+        const data = await resp.json();
+        if (data.available) {
+            S.hasNotification = true;
+            $pillInd.classList.add('has-notification');
+            $pillDot.style.display = 'block';
+            $pillStatus.textContent = 'UPDATE';
+        }
+    } catch(e) {}
+}
+
+setInterval(checkCatchup, 60000);
+document.addEventListener('visibilitychange', () => { if (!document.hidden) checkCatchup(); });
+setTimeout(checkCatchup, 3000);
+
+
+/* ================================================================
+   Voice — Mic capture → /api/voice → playback
+   ================================================================ */
+
+const Voice = {
+    stream: null,
+    mediaRecorder: null,
+    chunks: [],
+    recording: false,
+    processing: false,
+    audioContext: null,
+
+    /** Request microphone access (once) */
+    async ensureMic() {
+        if (this.stream) return true;
+        try {
+            this.stream = await navigator.mediaDevices.getUserMedia({
+                audio: {
+                    channelCount: 1,
+                    sampleRate: 16000,
+                    echoCancellation: true,
+                    noiseSuppression: true,
+                }
+            });
+            return true;
+        } catch(e) {
+            console.error('Mic access denied:', e);
+            return false;
+        }
+    },
+
+    /** Start recording */
+    async startRecording() {
+        if (this.recording || this.processing) return;
+        if (!await this.ensureMic()) return;
+
+        this.chunks = [];
+        this.recording = true;
+
+        // Use AudioContext to capture raw PCM at 16kHz
+        this.audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
+        const source = this.audioContext.createMediaStreamSource(this.stream);
+
+        // ScriptProcessor for raw PCM capture (widely supported, even in WebKitGTK)
+        const bufferSize = 4096;
+        this.scriptProcessor = this.audioContext.createScriptProcessor(bufferSize, 1, 1);
+        this.pcmChunks = [];
+
+        this.scriptProcessor.onaudioprocess = (e) => {
+            if (!this.recording) return;
+            const float32 = e.inputBuffer.getChannelData(0);
+            // Copy — the buffer gets reused
+            this.pcmChunks.push(new Float32Array(float32));
+        };
+
+        source.connect(this.scriptProcessor);
+        this.scriptProcessor.connect(this.audioContext.destination);
+
+        $hudMicBtn.classList.add('recording');
+        $pillStatus.textContent = 'LISTENING';
+    },
+
+    /** Stop recording and send to server */
+    async stopRecording() {
+        if (!this.recording) return;
+        this.recording = false;
+        this.processing = true;
+
+        // Disconnect audio nodes
+        if (this.scriptProcessor) {
+            this.scriptProcessor.disconnect();
+            this.scriptProcessor = null;
+        }
+        if (this.audioContext) {
+            this.audioContext.close();
+            this.audioContext = null;
+        }
+
+        $hudMicBtn.classList.remove('recording');
+        $hudMicBtn.classList.add('processing');
+        $pillStatus.textContent = 'PROCESSING';
+
+        // Merge PCM chunks → Float32Array → Int16Array → WAV
+        const totalLength = this.pcmChunks.reduce((acc, c) => acc + c.length, 0);
+        if (totalLength < 1600) { // Less than 100ms at 16kHz — too short
+            this.processing = false;
+            $hudMicBtn.classList.remove('processing');
+            $pillStatus.textContent = 'READY';
+            return;
+        }
+
+        const merged = new Float32Array(totalLength);
+        let offset = 0;
+        for (const chunk of this.pcmChunks) {
+            merged.set(chunk, offset);
+            offset += chunk.length;
+        }
+        this.pcmChunks = [];
+
+        // Float32 → Int16
+        const int16 = new Int16Array(merged.length);
+        for (let i = 0; i < merged.length; i++) {
+            const s = Math.max(-1, Math.min(1, merged[i]));
+            int16[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+        }
+
+        // Encode WAV
+        const wavBytes = encodeWAV(int16, 16000, 1);
+        await this.sendVoice(wavBytes);
+    },
+
+    /** Send WAV to /api/voice and handle response */
+    async sendVoice(wavBlob) {
+        if (!S.persona) { this.resetState(); return; }
+
+        // Auto-create session
+        if (!S.session) {
+            try {
+                const resp = await fetch('/api/sessions', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ persona_key: S.persona }),
+                });
+                const session = await resp.json();
+                S.session = session.id;
+                await loadSessions(S.persona);
+                renderSessionStrip(S.sessions[S.persona] || []);
+            } catch(e) { console.error(e); this.resetState(); return; }
+        }
+
+        try {
+            const resp = await fetch('/api/voice', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'audio/wav',
+                    'X-Session-Id': String(S.session),
+                    'X-Persona': S.persona,
+                },
+                body: wavBlob,
+            });
+
+            if (!resp.ok) {
+                const err = await resp.json().catch(() => ({ error: 'Voice request failed' }));
+                console.error('Voice error:', err);
+                this.resetState();
+                return;
+            }
+
+            // Parse multipart-ish response: JSON with base64 audio
+            const data = await resp.json();
+            const transcript = data.transcript || '';
+            const responseText = data.response_text || '';
+            const audioB64 = data.audio_b64 || null;
+            const persona = PERSONAS[S.persona];
+
+            // Show user transcript in chat
+            if (transcript) {
+                appendMsg('user', '🎤 ' + transcript, persona);
+            }
+
+            // Show assistant response in chat
+            if (responseText) {
+                const assistDiv = appendMsg('assistant', '', persona);
+                const span = assistDiv.querySelector('.msg-content');
+                span.innerHTML = fmtContent(responseText);
+                scrollChat();
+            }
+
+            // Play back audio
+            if (audioB64) {
+                this.playAudio(audioB64);
+            }
+
+            await loadSessions(S.persona);
+
+        } catch(e) {
+            console.error('Voice send error:', e);
+        }
+
+        this.resetState();
+    },
+
+    /** Play base64 WAV audio */
+    playAudio(b64) {
+        try {
+            const binary = atob(b64);
+            const bytes = new Uint8Array(binary.length);
+            for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+            const blob = new Blob([bytes], { type: 'audio/wav' });
+            const url = URL.createObjectURL(blob);
+            const audio = new Audio(url);
+            audio.onended = () => URL.revokeObjectURL(url);
+            audio.play().catch(e => console.error('Audio playback error:', e));
+        } catch(e) {
+            console.error('playAudio error:', e);
+        }
+    },
+
+    resetState() {
+        this.processing = false;
+        $hudMicBtn.classList.remove('recording', 'processing');
+        $pillStatus.textContent = 'READY';
+    }
+};
+
+/** Encode Int16Array + sample rate → WAV ArrayBuffer */
+function encodeWAV(samples, sampleRate, numChannels) {
+    const byteRate = sampleRate * numChannels * 2;
+    const blockAlign = numChannels * 2;
+    const dataSize = samples.length * 2;
+    const buffer = new ArrayBuffer(44 + dataSize);
+    const view = new DataView(buffer);
+
+    // RIFF header
+    writeString(view, 0, 'RIFF');
+    view.setUint32(4, 36 + dataSize, true);
+    writeString(view, 8, 'WAVE');
+
+    // fmt chunk
+    writeString(view, 12, 'fmt ');
+    view.setUint32(16, 16, true);
+    view.setUint16(20, 1, true);         // PCM
+    view.setUint16(22, numChannels, true);
+    view.setUint32(24, sampleRate, true);
+    view.setUint32(28, byteRate, true);
+    view.setUint16(32, blockAlign, true);
+    view.setUint16(34, 16, true);        // bits per sample
+
+    // data chunk
+    writeString(view, 36, 'data');
+    view.setUint32(40, dataSize, true);
+
+    // PCM samples
+    const offset = 44;
+    for (let i = 0; i < samples.length; i++) {
+        view.setInt16(offset + i * 2, samples[i], true);
+    }
+
+    return buffer;
+}
+
+function writeString(view, offset, str) {
+    for (let i = 0; i < str.length; i++) {
+        view.setUint8(offset + i, str.charCodeAt(i));
+    }
+}
+
+// Mic button — click to toggle
+$hudMicBtn.addEventListener('mousedown', (e) => {
+    e.preventDefault();
+    if (Voice.processing || S.streaming) return;
+    if (Voice.recording) {
+        Voice.stopRecording();
+    } else {
+        Voice.startRecording();
+    }
+});
+
+
+/* ================================================================
+   Settings — populate persona list
+   ================================================================ */
+
+function buildSettingsPersonas() {
+    const container = document.getElementById('settings-persona-list');
+    container.innerHTML = PERSONA_ORDER.map(key => {
+        const p = PERSONAS[key];
+        return `
+            <div class="settings-row">
+                <span class="setting-label">${p.avatar} ${p.name}</span>
+                <span class="setting-value">${p.role}</span>
+            </div>
+        `;
+    }).join('');
+}
+
+
+/* ================================================================
+   Init
+   ================================================================ */
+
+buildPersonaStrip();
+buildSettingsPersonas();
+initSettings();
+initDrag();
+selectPersona('kiro');
+checkVoiceHealth();  // Check kiro_server availability
+
+</script>
+</body>
+</html>

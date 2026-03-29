@@ -1,0 +1,65 @@
+#!/usr/bin/env python3
+"""
+KIRO UI — Desktop Launcher
+Starts the Flask server in a background thread and opens
+a native desktop window via pywebview.
+
+Usage:
+    python launcher.py          # Normal windowed mode
+    python launcher.py --debug  # Also opens Flask in browser
+"""
+
+import sys
+import threading
+import time
+import webview
+from app import app
+from config import APP_TITLE, APP_WIDTH, APP_HEIGHT, FLASK_PORT
+
+
+def start_server():
+    """Run Flask in a background thread."""
+    app.run(
+        host="127.0.0.1",
+        port=FLASK_PORT,
+        debug=False,
+        use_reloader=False,
+    )
+
+
+def main():
+    debug = "--debug" in sys.argv
+
+    # Start Flask server
+    server_thread = threading.Thread(target=start_server, daemon=True)
+    server_thread.start()
+
+    # Brief pause to let Flask bind
+    time.sleep(0.8)
+
+    url = f"http://127.0.0.1:{FLASK_PORT}"
+
+    if debug:
+        print(f"KIRO UI running at {url}")
+        print("Press Ctrl+C to quit.")
+        try:
+            while True:
+                time.sleep(1)
+        except KeyboardInterrupt:
+            sys.exit(0)
+    else:
+        # Native window
+        window = webview.create_window(
+            APP_TITLE,
+            url,
+            width=APP_WIDTH,
+            height=APP_HEIGHT,
+            min_size=(900, 600),
+            background_color="#0D0F0E",
+            text_select=True,
+        )
+        webview.start(debug=False)
+
+
+if __name__ == "__main__":
+    main()
