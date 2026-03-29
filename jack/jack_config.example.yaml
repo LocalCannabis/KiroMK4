@@ -1,0 +1,118 @@
+# =============================================================================
+# Jack Master Grower — Configuration
+# =============================================================================
+# Copy to ~/.kiro/jack_config.yaml and customize for your setup.
+#
+# Config over code: stage targets, checkin schedules, and confidence
+# thresholds are all configurable here — not hardcoded in Jack's code.
+# =============================================================================
+
+# ── Database (PostgreSQL) ─────────────────────────────────────────────────
+# Jack requires PostgreSQL with pgvector extension for knowledge storage.
+# No SQLite, no flat files.
+database:
+  host: localhost
+  port: 5432
+  dbname: kiro
+  user: kiro
+  password: ""               # Or set via env: JACK_DB_PASSWORD
+
+# ── Embeddings ────────────────────────────────────────────────────────────
+# Used for knowledge chunk embedding and similarity retrieval.
+embeddings:
+  provider: openai            # openai | sentence_transformers
+  openai_model: text-embedding-ada-002
+  dimension: 1536
+  st_model: all-MiniLM-L6-v2  # fallback for sentence_transformers
+
+# ── Knowledge Retrieval ───────────────────────────────────────────────────
+knowledge:
+  retrieval_top_k: 5
+  min_similarity: 0.70        # cosine similarity threshold
+
+# ── Checkin Schedule ──────────────────────────────────────────────────────
+checkin:
+  enabled: true
+  default_time: "12:00"       # 24h format, local time
+  stale_thresholds:           # Hours before Jack proactively asks
+    humidity: 24
+    temperature: 24
+    light_distance: 48
+    soil_moisture: 72
+    watering: 72
+  recent_entries_count: 5     # How many log entries Jack loads per interaction
+
+# ── Environmental Targets by Growth Stage ─────────────────────────────────
+# These power Jack's flag system. All ranges are [min, max].
+# Based on Bugbee's research, Dimlux VPD charts, and peat-based soil targets.
+stage_targets:
+  seedling:
+    humidity_pct: [65, 80]
+    temp_canopy_c: [22, 26]
+    vpd_kpa: [0.4, 0.8]
+    dli_mol: [12, 18]
+    light_schedule: "18/6"
+
+  veg:
+    humidity_pct: [55, 70]
+    temp_canopy_c: [22, 28]
+    vpd_kpa: [0.8, 1.2]
+    dli_mol: [18, 30]
+    light_schedule: "18/6"
+
+  transition:
+    humidity_pct: [50, 65]
+    temp_canopy_c: [22, 28]
+    vpd_kpa: [0.9, 1.3]
+    dli_mol: [25, 40]
+    light_schedule: "12/12"
+
+  flower:
+    humidity_pct: [40, 55]
+    temp_canopy_c: [20, 27]
+    vpd_kpa: [1.0, 1.5]
+    dli_mol: [30, 45]
+    light_schedule: "12/12"
+
+  flush:
+    humidity_pct: [40, 55]
+    temp_canopy_c: [20, 26]
+    vpd_kpa: [1.0, 1.5]
+    dli_mol: [25, 35]
+    light_schedule: "12/12"
+
+  dry:
+    humidity_pct: [55, 65]
+    temp_canopy_c: [16, 21]
+    vpd_kpa: null              # Not tracked during dry
+    dli_mol: null
+    light_schedule: "0/24"
+
+  cure:
+    humidity_pct: [58, 65]
+    temp_canopy_c: [16, 21]
+    vpd_kpa: null
+    dli_mol: null
+    light_schedule: "0/24"
+
+# ── Tent Setup ────────────────────────────────────────────────────────────
+# Physical tent dimensions and growing medium.
+tent:
+  tent_size: "2x2"            # footprint in feet
+  tent_height: "4ft"          # usable height
+  medium: "peat-based (WP420)" # WP420, ProMix HP, etc.
+
+# ── Light / Equipment ────────────────────────────────────────────────────
+# Your grow light specs. Powers DLI calculations and distance advice.
+light:
+  model: "Indo GrowHub 800C"
+  wattage: 200                # actual wall draw in watts
+  spectrum: "full spectrum 3000K"
+  efficiency_umol_per_watt: 1.7  # CREE COB efficiency (~1.6-1.8 range)
+  has_dimmer: false            # GrowHub has no dimmer — distance is the control
+  fan_cfm: 105                # integrated exhaust fan max CFM
+
+# ── Confidence Framework ──────────────────────────────────────────────────
+confidence:
+  high_min_sources: 2
+  medium_min_sources: 1

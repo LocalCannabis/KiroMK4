@@ -21,14 +21,46 @@ from .notes_lists import NotesAndLists
 # Google integrations (lazy-loaded to avoid auth prompts on import)
 _google_available = False
 try:
-    from .google_calendar import create_calendar_event, list_calendar_events
-    from .google_sheets import create_budget, add_expense, get_budget_summary, update_budget_item
-    from .gmail import read_emails, send_email, draft_email, search_emails
+    from .google_calendar import (create_calendar_event, list_calendar_events,
+                                    modify_calendar_event, delete_calendar_event,
+                                    search_calendar_events, check_calendar_availability)
+    from .google_sheets import (read_sheet_range, write_sheet_cells, append_sheet_row,
+                                create_spreadsheet, export_ynab_summary)
+    from .gmail import (read_emails, send_email, draft_email, search_emails,
+                        read_email_content, reply_to_email)
     from .google_docs import create_doc, append_to_doc, read_doc
+    from .google_drive import search_drive, list_drive_folder, get_file_info
     _google_available = True
 except ImportError as _e:
     import logging as _log
     _log.getLogger('kiro').warning('Google tools unavailable: %s', _e)
+
+# Finley YNAB integration (lazy-loaded)
+_finley_available = False
+try:
+    from finley.intent_router import FINLEY_TOOL_SCHEMAS, execute_finley_tool
+    _finley_available = True
+except ImportError as _e:
+    import logging as _log2
+    _log2.getLogger('kiro').warning('Finley YNAB tools unavailable: %s', _e)
+
+# Jack master grower integration (lazy-loaded)
+_jack_available = False
+try:
+    from jack.intent_router import JACK_TOOL_SCHEMAS, execute_jack_tool
+    _jack_available = True
+except ImportError as _e:
+    import logging as _log3
+    _log3.getLogger('kiro').warning('Jack grow tools unavailable: %s', _e)
+
+# Coach executive function integration (lazy-loaded)
+_coach_available = False
+try:
+    from coach.intent_router import COACH_TOOL_SCHEMAS, execute_coach_tool
+    _coach_available = True
+except ImportError as _e:
+    import logging as _log4
+    _log4.getLogger('kiro').warning('Coach tools unavailable: %s', _e)
 
 
 # ---------------------------------------------------------------------------
@@ -176,15 +208,16 @@ _GOOGLE_SCHEMAS: List[Dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "create_calendar_event",
-            "description": "Create a Google Calendar event. Use for scheduling meetings, reminders, appointments.",
+            "description": "Create a Google Calendar event. Use for scheduling meetings, reminders, appointments. Supports timed and all-day events.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "summary": {"type": "string", "description": "Event title."},
-                    "start_time": {"type": "string", "description": "Start time in ISO format, e.g. 2026-03-12T15:00:00."},
+                    "start_time": {"type": "string", "description": "Start time in ISO format (e.g. 2026-03-12T15:00:00) or date-only for all-day events (e.g. 2026-03-12)."},
                     "end_time": {"type": "string", "description": "End time in ISO format. If omitted, defaults to 1 hour after start.", "default": ""},
                     "description": {"type": "string", "description": "Optional event description.", "default": ""},
                     "location": {"type": "string", "description": "Optional event location.", "default": ""},
+                    "all_day": {"type": "boolean", "description": "Set to true for all-day events.", "default": False},
                 },
                 "required": ["summary", "start_time"],
             },
@@ -205,63 +238,68 @@ _GOOGLE_SCHEMAS: List[Dict[str, Any]] = [
             },
         },
     },
-    # ── Sheets (Finley's budget) ──────────────────────────────────────────
     {
         "type": "function",
         "function": {
-            "name": "create_budget",
-            "description": "Create a new budget spreadsheet in Google Sheets with default expense categories.",
+            "name": "modify_calendar_event",
+            "description": "Modify an existing calendar event. Find it by name and update any fields (time, title, location, description). Use for rescheduling, renaming, or updating events.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "title": {"type": "string", "description": "Optional title for the spreadsheet.", "default": ""},
+                    "search_query": {"type": "string", "description": "Name or keyword to find the event, e.g. 'dentist' or 'meeting with Dave'."},
+                    "new_summary": {"type": "string", "description": "New event title. Leave empty to keep current.", "default": ""},
+                    "new_start_time": {"type": "string", "description": "New start time in ISO format. Leave empty to keep current.", "default": ""},
+                    "new_end_time": {"type": "string", "description": "New end time in ISO format. Leave empty to auto-adjust.", "default": ""},
+                    "new_description": {"type": "string", "description": "New description. Leave empty to keep current.", "default": ""},
+                    "new_location": {"type": "string", "description": "New location. Leave empty to keep current.", "default": ""},
+                },
+                "required": ["search_query"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "delete_calendar_event",
+            "description": "Delete/cancel a calendar event. Finds the event by name and removes it.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "search_query": {"type": "string", "description": "Name or keyword to find the event to delete."},
+                },
+                "required": ["search_query"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "search_calendar_events",
+            "description": "Search for calendar events by keyword. Use when Tim asks 'when is my dentist appointment?' or 'do I have anything with Dave coming up?'.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Keyword to search for in event titles."},
+                    "days_ahead": {"type": "integer", "description": "How many days ahead to search.", "default": 60},
+                    "max_results": {"type": "integer", "description": "Max events to return.", "default": 5},
+                },
+                "required": ["query"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "check_calendar_availability",
+            "description": "Check if a time slot is free or busy. Use when Tim asks 'am I free Thursday afternoon?' or 'do I have anything on the 15th?'.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "start_time": {"type": "string", "description": "Start of the time range to check (ISO format).", "default": ""},
+                    "end_time": {"type": "string", "description": "End of the time range to check (ISO format).", "default": ""},
+                    "date": {"type": "string", "description": "Check an entire day (ISO date like '2026-03-15'). Use instead of start/end for whole-day checks.", "default": ""},
                 },
                 "required": [],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "add_expense",
-            "description": "Log an expense in the budget spreadsheet. Tracks spending by category.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "category": {"type": "string", "description": "Expense category, e.g. 'Food & Groceries', 'Transport', 'Entertainment'."},
-                    "description": {"type": "string", "description": "What the expense was for."},
-                    "amount": {"type": "number", "description": "Amount spent in dollars."},
-                },
-                "required": ["category", "description", "amount"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "get_budget_summary",
-            "description": "Read budget summary — overall spending or for a specific category.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "category": {"type": "string", "description": "Optional category to filter by, e.g. 'Food & Groceries'. Leave empty for overall.", "default": ""},
-                },
-                "required": [],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "update_budget_item",
-            "description": "Update the monthly budget amount for a category, e.g. when rent goes up.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "category": {"type": "string", "description": "Budget category to update."},
-                    "monthly_budget": {"type": "number", "description": "New monthly budget amount in dollars."},
-                },
-                "required": ["category", "monthly_budget"],
             },
         },
     },
@@ -270,7 +308,7 @@ _GOOGLE_SCHEMAS: List[Dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "read_emails",
-            "description": "Read recent emails from Gmail. Defaults to unread inbox.",
+            "description": "Read recent emails from Gmail. Defaults to unread inbox. Returns sender and subject for each.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -278,6 +316,21 @@ _GOOGLE_SCHEMAS: List[Dict[str, Any]] = [
                     "query": {"type": "string", "description": "Gmail search query, e.g. 'is:unread', 'from:dave@example.com'.", "default": "is:unread"},
                 },
                 "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "read_email_content",
+            "description": "Read the full body/content of a specific email. Use when Tim asks 'what did that email say?' or 'read me the email from Dave'.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "search_query": {"type": "string", "description": "Gmail search query to find the specific email, e.g. 'from:dave subject:meeting' or 'invoice from amazon'."},
+                    "max_chars": {"type": "integer", "description": "Max characters to return from the body.", "default": 1500},
+                },
+                "required": ["search_query"],
             },
         },
     },
@@ -294,6 +347,21 @@ _GOOGLE_SCHEMAS: List[Dict[str, Any]] = [
                     "body": {"type": "string", "description": "Email body text."},
                 },
                 "required": ["to", "subject", "body"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "reply_to_email",
+            "description": "Reply to an existing email thread. Finds the email by search query and sends a threaded reply preserving conversation context.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "search_query": {"type": "string", "description": "Gmail search to find the email to reply to, e.g. 'from:dave subject:meeting'."},
+                    "body": {"type": "string", "description": "The reply message text."},
+                },
+                "required": ["search_query", "body"],
             },
         },
     },
@@ -373,6 +441,131 @@ _GOOGLE_SCHEMAS: List[Dict[str, Any]] = [
             },
         },
     },
+    # ── Google Drive ──────────────────────────────────────────────────────
+    {
+        "type": "function",
+        "function": {
+            "name": "search_drive",
+            "description": "Search Google Drive for files by name. Optionally filter by type (doc, sheet, slides, pdf, folder).",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "File name or keyword to search for."},
+                    "max_results": {"type": "integer", "description": "Max results to return.", "default": 5},
+                    "file_type": {"type": "string", "description": "Optional filter: 'doc', 'sheet', 'slides', 'pdf', 'folder'.", "default": ""},
+                },
+                "required": ["query"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "list_drive_folder",
+            "description": "List files in a Google Drive folder. If no folder specified, lists recent files in root.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "folder_name": {"type": "string", "description": "Name of the folder to list. Leave empty for Drive root.", "default": ""},
+                    "max_results": {"type": "integer", "description": "Max files to list.", "default": 10},
+                },
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_file_info",
+            "description": "Get metadata about a file in Google Drive — type, size, last modified, owner, shared status.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "file_name": {"type": "string", "description": "Name of the file to look up."},
+                },
+                "required": ["file_name"],
+            },
+        },
+    },
+    # ── Generic Sheets ────────────────────────────────────────────────────
+    {
+        "type": "function",
+        "function": {
+            "name": "read_sheet_range",
+            "description": "Read a range of cells from any Google Sheet (found by name). Use for reading data from spreadsheets.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "spreadsheet_name": {"type": "string", "description": "Name of the Google Sheet to read from."},
+                    "range_notation": {"type": "string", "description": "A1 notation range, e.g. 'A1:D10'.", "default": "A1:Z20"},
+                    "sheet_tab": {"type": "string", "description": "Optional tab/sheet name within the spreadsheet.", "default": ""},
+                },
+                "required": ["spreadsheet_name"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "write_sheet_cells",
+            "description": "Write values to cells in a Google Sheet. Use pipe | to separate rows and comma , to separate cells.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "spreadsheet_name": {"type": "string", "description": "Name of the Google Sheet."},
+                    "range_notation": {"type": "string", "description": "Starting cell or range, e.g. 'A1' or 'B5:D5'."},
+                    "values": {"type": "string", "description": "Data to write. Pipe-separated rows, comma-separated cells. E.g. 'Name,Score|Alice,95|Bob,87'."},
+                    "sheet_tab": {"type": "string", "description": "Optional tab/sheet name.", "default": ""},
+                },
+                "required": ["spreadsheet_name", "range_notation", "values"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "append_sheet_row",
+            "description": "Append a row to the bottom of a Google Sheet. Good for logging data.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "spreadsheet_name": {"type": "string", "description": "Name of the Google Sheet."},
+                    "values": {"type": "string", "description": "Comma-separated cell values for the new row, e.g. '2025-07-15, Workout, 45 min'."},
+                    "sheet_tab": {"type": "string", "description": "Optional tab/sheet name.", "default": ""},
+                },
+                "required": ["spreadsheet_name", "values"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "create_spreadsheet",
+            "description": "Create a new Google Spreadsheet with optional header row.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "title": {"type": "string", "description": "Title for the new spreadsheet."},
+                    "headers": {"type": "string", "description": "Optional comma-separated column headers, e.g. 'Date, Category, Amount, Notes'.", "default": ""},
+                },
+                "required": ["title"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "export_ynab_summary",
+            "description": "Export a snapshot of Tim's YNAB budget data to a Google Sheet. Creates tabs for Accounts, Budget, and Recent Transactions. YNAB remains the single source of truth — the sheet is a read-only backup.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "sheet_name": {"type": "string", "description": "Name for the export spreadsheet.", "default": "Kiro Financial Summary"},
+                },
+                "required": [],
+            },
+        },
+    },
 ]
 
 
@@ -386,14 +579,107 @@ _GOOGLE_SCHEMAS: List[Dict[str, Any]] = [
 # ---------------------------------------------------------------------------
 
 _PERSONA_TOOLS: Dict[str, List[str]] = {
-    "kiro": ["create_calendar_event", "list_calendar_events", "read_emails", "send_email", "draft_email", "search_emails"],
-    "finley": ["create_budget", "add_expense", "get_budget_summary", "update_budget_item", "read_emails", "search_emails"],
-    "chef": ["create_doc", "append_to_doc", "read_doc"],
-    "ops": ["create_doc", "append_to_doc", "read_doc", "read_emails", "send_email"],
-    "coach": [],
-    "doc": [],
-    "sage": [],
-    "ruth": [],
+    "kiro": [
+        # Calendar (full CRUD + search + availability)
+        "create_calendar_event", "list_calendar_events", "modify_calendar_event",
+        "delete_calendar_event", "search_calendar_events", "check_calendar_availability",
+        # Email (full suite)
+        "read_emails", "read_email_content", "send_email", "reply_to_email", "draft_email", "search_emails",
+        # Drive
+        "search_drive", "list_drive_folder", "get_file_info",
+        # Docs
+        "create_doc", "append_to_doc", "read_doc",
+        # Generic Sheets
+        "read_sheet_range", "write_sheet_cells", "append_sheet_row", "create_spreadsheet",
+    ],
+    "finley": [
+        # Sheets (generic + YNAB export)
+        "read_sheet_range", "write_sheet_cells", "append_sheet_row", "create_spreadsheet",
+        "export_ynab_summary",
+        # Email (read + search for invoice lookups etc.)
+        "read_emails", "read_email_content", "search_emails",
+        # Calendar (scheduling financial reviews, bill due dates)
+        "list_calendar_events", "search_calendar_events",
+        # YNAB tools
+        "ynab_spending_by_category", "ynab_spending_by_payee", "ynab_spending_trend",
+        "ynab_daily_spending_rate", "ynab_top_transactions", "ynab_budget_vs_actual",
+        "ynab_overspent_categories", "ynab_remaining_budget", "ynab_days_until_broke",
+        "ynab_account_balances", "ynab_net_worth", "ynab_credit_card_balances",
+        "ynab_upcoming_bills", "ynab_recurring_summary", "ynab_income_vs_expenses",
+    ],
+    "chef": [
+        # Docs (recipes)
+        "create_doc", "append_to_doc", "read_doc",
+        # Calendar (meal planning, dinner party scheduling)
+        "create_calendar_event", "list_calendar_events", "search_calendar_events",
+        # Sheets (grocery lists, meal plans)
+        "read_sheet_range", "append_sheet_row",
+    ],
+    "ops": [
+        # Docs (runbooks, notes)
+        "create_doc", "append_to_doc", "read_doc",
+        # Email (deployments, alerts)
+        "read_emails", "read_email_content", "send_email", "reply_to_email", "search_emails",
+        # Calendar (standups, deployments)
+        "create_calendar_event", "list_calendar_events", "modify_calendar_event", "search_calendar_events",
+        # Drive (finding project files)
+        "search_drive", "list_drive_folder", "get_file_info",
+        # Sheets (project tracking)
+        "read_sheet_range", "write_sheet_cells", "append_sheet_row", "create_spreadsheet",
+    ],
+    "coach": [
+        # Coach executive function tools (GTD + Barkley + Atomic Habits)
+        "coach_add_task", "coach_list_tasks", "coach_complete_task", "coach_update_task",
+        "coach_add_project", "coach_list_projects", "coach_project_status",
+        "coach_capture_dump", "coach_whats_next", "coach_plan_day",
+        "coach_daily_progress", "coach_inbox_review", "coach_weekly_review",
+        "coach_energy_check",
+        # Calendar (scheduling, reminders)
+        "create_calendar_event", "list_calendar_events", "modify_calendar_event",
+        "search_calendar_events", "check_calendar_availability",
+        # Sheets (tracking, logs)
+        "read_sheet_range", "append_sheet_row", "create_spreadsheet",
+        # Docs (plans, reviews)
+        "create_doc", "append_to_doc", "read_doc",
+    ],
+    "doc": [
+        # Calendar (check-in reminders, therapy appointments)
+        "create_calendar_event", "list_calendar_events", "search_calendar_events",
+        # Docs (journaling, reflections)
+        "create_doc", "append_to_doc", "read_doc",
+    ],
+    "sage": [
+        # Docs (debate notes, reading lists)
+        "create_doc", "append_to_doc", "read_doc",
+        # Drive (finding reference files)
+        "search_drive", "get_file_info",
+    ],
+    "ruth": [
+        # Calendar (awareness of Tim's schedule for context)
+        "list_calendar_events", "search_calendar_events",
+        # Email (awareness of what's happening)
+        "read_emails", "read_email_content",
+        # Docs (letters, reflections)
+        "create_doc", "append_to_doc", "read_doc",
+    ],
+    "lisa": [
+        # Calendar (hangout planning, event awareness)
+        "create_calendar_event", "list_calendar_events", "search_calendar_events",
+        "check_calendar_availability",
+        # Email (keeping tabs, fun forwarding)
+        "read_emails", "read_email_content", "search_emails",
+        # Docs (brainstorm docs, idea dumps)
+        "create_doc", "append_to_doc", "read_doc",
+        # Drive (finding interesting files)
+        "search_drive",
+    ],
+    "jack": [
+        # Jack grow management tools
+        "jack_log_checkin", "jack_get_grow_status", "jack_get_recent_logs",
+        "jack_update_grow_stage", "jack_log_watering", "jack_get_feeding_schedule",
+        "jack_compute_vpd", "jack_compute_dli",
+        "jack_create_grow", "jack_setup_tent", "jack_list_grows",
+    ],
 }
 
 # Tools every persona can access regardless of ownership
@@ -420,6 +706,21 @@ class ToolRegistry:
         if _google_available:
             self._all_schemas.extend(_GOOGLE_SCHEMAS)
             self.logger.info("Google tools loaded: calendar, sheets, gmail, docs")
+
+        # Merge Finley YNAB schemas if available
+        if _finley_available:
+            self._all_schemas.extend(FINLEY_TOOL_SCHEMAS)
+            self.logger.info("Finley YNAB tools loaded: %d financial analysis tools", len(FINLEY_TOOL_SCHEMAS))
+
+        # Merge Jack grow management schemas if available
+        if _jack_available:
+            self._all_schemas.extend(JACK_TOOL_SCHEMAS)
+            self.logger.info("Jack grow tools loaded: %d grow management tools", len(JACK_TOOL_SCHEMAS))
+
+        # Merge Coach executive function schemas if available
+        if _coach_available:
+            self._all_schemas.extend(COACH_TOOL_SCHEMAS)
+            self.logger.info("Coach tools loaded: %d executive function tools", len(COACH_TOOL_SCHEMAS))
 
         if self._enabled:
             self.logger.info("Tools enabled: %s", sorted(self._allow_list))
@@ -484,28 +785,35 @@ class ToolRegistry:
                 end_time=args.get("end_time", ""),
                 description=args.get("description", ""),
                 location=args.get("location", ""),
+                all_day=bool(args.get("all_day", False)),
             )
         if name == "list_calendar_events" and _google_available:
             return list_calendar_events(
                 time_range=args.get("time_range", "today"),
                 max_results=int(args.get("max_results", 10)),
             )
-
-        # ── Google Sheets (Finley) ────────────────────────────────────────
-        if name == "create_budget" and _google_available:
-            return create_budget(title=args.get("title", ""))
-        if name == "add_expense" and _google_available:
-            return add_expense(
-                category=args["category"],
-                description=args["description"],
-                amount=float(args["amount"]),
+        if name == "modify_calendar_event" and _google_available:
+            return modify_calendar_event(
+                search_query=args["search_query"],
+                new_summary=args.get("new_summary", ""),
+                new_start_time=args.get("new_start_time", ""),
+                new_end_time=args.get("new_end_time", ""),
+                new_description=args.get("new_description", ""),
+                new_location=args.get("new_location", ""),
             )
-        if name == "get_budget_summary" and _google_available:
-            return get_budget_summary(category=args.get("category", ""))
-        if name == "update_budget_item" and _google_available:
-            return update_budget_item(
-                category=args["category"],
-                monthly_budget=float(args["monthly_budget"]),
+        if name == "delete_calendar_event" and _google_available:
+            return delete_calendar_event(search_query=args["search_query"])
+        if name == "search_calendar_events" and _google_available:
+            return search_calendar_events(
+                query=args["query"],
+                days_ahead=int(args.get("days_ahead", 60)),
+                max_results=int(args.get("max_results", 5)),
+            )
+        if name == "check_calendar_availability" and _google_available:
+            return check_calendar_availability(
+                start_time=args.get("start_time", ""),
+                end_time=args.get("end_time", ""),
+                date=args.get("date", ""),
             )
 
         # ── Gmail ─────────────────────────────────────────────────────────
@@ -514,8 +822,15 @@ class ToolRegistry:
                 max_results=int(args.get("max_results", 5)),
                 query=args.get("query", "is:unread"),
             )
+        if name == "read_email_content" and _google_available:
+            return read_email_content(
+                search_query=args["search_query"],
+                max_chars=int(args.get("max_chars", 1500)),
+            )
         if name == "send_email" and _google_available:
             return send_email(to=args["to"], subject=args["subject"], body=args["body"])
+        if name == "reply_to_email" and _google_available:
+            return reply_to_email(search_query=args["search_query"], body=args["body"])
         if name == "draft_email" and _google_available:
             return draft_email(to=args["to"], subject=args["subject"], body=args["body"])
         if name == "search_emails" and _google_available:
@@ -528,5 +843,62 @@ class ToolRegistry:
             return append_to_doc(title=args["title"], content=args["content"])
         if name == "read_doc" and _google_available:
             return read_doc(title=args["title"])
+
+        # ── Google Drive ──────────────────────────────────────────────────
+        if name == "search_drive" and _google_available:
+            return search_drive(
+                query=args["query"],
+                max_results=int(args.get("max_results", 5)),
+                file_type=args.get("file_type", ""),
+            )
+        if name == "list_drive_folder" and _google_available:
+            return list_drive_folder(
+                folder_name=args.get("folder_name", ""),
+                max_results=int(args.get("max_results", 10)),
+            )
+        if name == "get_file_info" and _google_available:
+            return get_file_info(file_name=args["file_name"])
+
+        # ── Generic Sheets ────────────────────────────────────────────────
+        if name == "read_sheet_range" and _google_available:
+            return read_sheet_range(
+                spreadsheet_name=args["spreadsheet_name"],
+                range_notation=args.get("range_notation", "A1:Z20"),
+                sheet_tab=args.get("sheet_tab", ""),
+            )
+        if name == "write_sheet_cells" and _google_available:
+            return write_sheet_cells(
+                spreadsheet_name=args["spreadsheet_name"],
+                range_notation=args["range_notation"],
+                values=args["values"],
+                sheet_tab=args.get("sheet_tab", ""),
+            )
+        if name == "append_sheet_row" and _google_available:
+            return append_sheet_row(
+                spreadsheet_name=args["spreadsheet_name"],
+                values=args["values"],
+                sheet_tab=args.get("sheet_tab", ""),
+            )
+        if name == "create_spreadsheet" and _google_available:
+            return create_spreadsheet(
+                title=args["title"],
+                headers=args.get("headers", ""),
+            )
+        if name == "export_ynab_summary" and _google_available:
+            return export_ynab_summary(
+                sheet_name=args.get("sheet_name", "Kiro Financial Summary"),
+            )
+
+        # ── Finley YNAB + profiling tools ─────────────────────────────────
+        if (name.startswith("ynab_") or name.startswith("finley_")) and _finley_available:
+            return execute_finley_tool(name, args)
+
+        # ── Jack grow management tools ─────────────────────────────────────
+        if name.startswith("jack_") and _jack_available:
+            return execute_jack_tool(name, args)
+
+        # ── Coach executive function tools ─────────────────────────────────
+        if name.startswith("coach_") and _coach_available:
+            return execute_coach_tool(name, args)
 
         return f"Unknown tool: {name}"

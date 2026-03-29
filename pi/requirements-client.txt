@@ -1,0 +1,24 @@
+# Kiro Pi thin-client dependencies
+# Install on Raspberry Pi 5 (ARM64):
+#
+#   python -m venv venv
+#   source venv/bin/activate
+#
+#   # PyTorch CPU-only for ARM64 (required for Silero VAD)
+#   pip install torch --index-url https://download.pytorch.org/whl/cpu
+#
+#   pip install -r requirements-client.txt
+
+sounddevice>=0.5
+numpy>=1.26
+scipy>=1.12
+requests>=2.31
+pyyaml>=6.0
+silero-vad>=5.1
+
+# torch is installed separately (CPU-only wheel for ARM64)
+# See install instructions above.
+
+# Optional: PortAudio system library (required by sounddevice)
+# On Raspberry Pi OS:
+#   sudo apt install libportaudio2 portaudio19-dev

@@ -30,25 +30,26 @@ audio:
 vad:
   engine: silero # silero | energy
   silero:
-    threshold: 0.65
+    threshold: 0.45
   energy:
     rms_threshold: 0.020
-  start_trigger_frames: 8
-  end_silence_ms: 700
+  start_trigger_frames: 3
+  end_silence_ms: 900
   max_utterance_s: 20
 
 stt:
   engine: faster_whisper # faster_whisper | openai
   faster_whisper:
-    # tiny.en: ~0.3s CPU inference (vs small.en ~1.1s) — sufficient for conversational accuracy
-    # Switch back to small.en if accuracy is noticeably poor on noisy input
-    model_size: tiny.en
+    # small.en: significantly better accuracy than tiny.en; ~500MB on GPU, ~1.1s RTF
+    # beam_size 5: proper beam-search decode vs greedy — higher accuracy at modest cost
+    model_size: small.en
     device: cuda
     compute_type: float16
     cpu_threads: 8
     num_workers: 1
     language: en
-    beam_size: 1
+    beam_size: 5
+    initial_prompt: "Kiro assistant. Tim speaking."
   openai:
     model: gpt-4o-mini-transcribe
 
@@ -59,8 +60,33 @@ ai:
   openai:
     model: gpt-4o
     temperature: 0.4
-    max_tokens: 80
+    max_tokens: 200
     api_key_env: OPENAI_API_KEY
+
+  # ---------------------------------------------------------------------------
+  # UI model routing — OpenRouter + Claude tiers
+  # The UI uses these instead of ai.openai above.
+  # Set OPENROUTER_API_KEY in .env to enable.
+  # ---------------------------------------------------------------------------
+  ui_routing:
+    provider: anthropic               # anthropic | openrouter | openai
+    base_url: https://api.anthropic.com  # not used for native anthropic SDK
+    api_key_env: ANTHROPIC_API_KEY
+    temperature: 0.4
+    # Model tiers — real Anthropic model IDs
+    models:
+      fast:     claude-haiku-4-5       # Simple lookups, quick Q&A
+      balanced: claude-sonnet-4-6      # Analysis, multi-step reasoning
+      deep:     claude-opus-4-6        # Strategy, planning, serious deep dives
+    # Per-persona default minimum tier (fast/balanced/deep)
+    persona_floor:
+      kiro:   fast
+      finley: fast
+      coach:  balanced
+      jack:   fast
+      chef:   fast
+      doc:    balanced
+      sage:   balanced
   ollama:
     model: mistral:7b-instruct-q4_K_M
     base_url: http://127.0.0.1:11434
@@ -84,10 +110,12 @@ tts:
       ops:    am_adam     # flat, efficient American male — technical/code persona
       sage:   bm_george   # intellectual British male — philosophy/debate
       finley: bm_lewis    # measured, authoritative British male — finance
-      coach:  am_michael  # energetic American male — fitness/motivation
+      coach:  am_michael  # calm American male — executive function coach
       chef:   bf_emma     # warm British female — cooking/recipes
       doc:    af_nicole   # gentle, soft American female — wellness/mental health
       ruth:   bf_isabella # warm British female — companion, loving clarity
+      lisa:   bf_lily     # lively British female — always-on companion, quirky and fun
+      jack:   am_adam     # calm, slightly gravelly American male — master grower
 
   # Piper fallback (used when Kokoro unavailable or for Pi deployment)
   piper_voice_map:
@@ -99,6 +127,8 @@ tts:
     coach:  ./data/voices/en_US-amy-medium.onnx
     doc:    ./data/voices/en_US-lessac-high.onnx
     ruth:   ./data/voices/en_US-lessac-high.onnx
+    lisa:   ./data/voices/en_US-lessac-high.onnx
+    jack:   ./data/voices/en_US-lessac-high.onnx
   piper:
     executable: /home/macklemoron/Projects/KiroMKIII/bin/piper/piper
     output_sample_rate: 22050
@@ -107,26 +137,49 @@ tts:
     model: gpt-4o-mini-tts
     voice: alloy
 
+  # ── Orpheus TTS (replaces Kokoro when ORPHEUS_ENABLED=true) ────────────────
+  # Voice assignments are stored in PostgreSQL (kiro_voices table).
+  # Set ORPHEUS_ENABLED=true in .env to activate.
+  orpheus:
+    api_url: http://localhost:5005
+    model: orpheus-tts-0.1-finetune-prod-Q8_0.gguf
+    default_voice: leah        # built-in fallback; overridden by kiro_voices table
+    lead_pad_ms: 50
+    trail_pad_ms: 150
+    gpu_mem_util: 0.35         # keep VRAM headroom for Whisper + LLM
+    voice_refs_dir: /home/kiro/voice_refs
+
 router:
   default_persona: kiro
   mode: keywords # keywords | model
   keyword_map:
     finley: [finley, finlay, budget, money, spending, rent, debt, finance, finances, financial]
     chef: [chef, cook, recipe, ingredient, meal, grocery, food, eating]
-    coach: [coach, workout, gym, protein, diet, fitness, exercise, training]
+    coach: [coach, task, tasks, project, projects, plan, focus, next action, inbox, capture, stuck, overwhelmed, procrastinating, executive function]
     doc: [doc, stress, anxiety, feeling, overwhelmed, sad, mental, therapy, emotions]
-    ruth: [ruth, companion, presence, lonely, lost, heart, connection, honest, truth, clarity]
+    ruth: [ruth, presence, lonely, lost, heart, connection, honest, truth, clarity]
+    lisa: [lisa, chat, hang out, hanging out, bored, random, funny, comedy, standup, joke, news, idea, ideas, bounce, vibe, vibes]
     sage: [sage, philosophy, debate, challenge, meaning, ethics, logic]
     ops: [ops, code, bug, server, deploy, flask, sqlite, python, linux, terminal]
+    jack: [jack, grow, grower, plant, plants, tent, strain, cannabis, weed, harvest, flower, flowering, veg, seedling, checkin, check in, watering, soil, humidity, vpd, dli]
 
 memory:
   enabled: true
-  sqlite_path: ./data/kiro.db
-  vector:
-    provider: chroma # chroma | lancedb
-    path: ./data/chroma
-    embedding_provider: sentence_transformers # sentence_transformers | openai
-    embedding_model: all-MiniLM-L6-v2
+  # All memory is now in PostgreSQL (kiro database). No SQLite.
+  database:
+    host: localhost
+    port: 5432
+    dbname: kiro
+    user: kiro
+    password: ""
+  # Legacy SQLite path (for one-time migration only)
+  legacy_sqlite_path: ./data/kiro.db
+  # Shelf embedding model (Tier 1 coarse retrieval)
+  embedding:
+    provider: openai
+    model: text-embedding-3-small
+  # All HRR/glass/promotion/cache tuning lives in memory_config table.
+  # Values here are only used as bootstrap defaults during schema creation.
   retrieval:
     top_k: 5
   privacy:
@@ -142,20 +195,85 @@ tools:
     - calendar
     - weather
     - calculate
-    # Google integrations
+    # Google Calendar
     - create_calendar_event
     - list_calendar_events
-    - create_budget
-    - add_expense
-    - get_budget_summary
-    - update_budget_item
+    - modify_calendar_event
+    - delete_calendar_event
+    - search_calendar_events
+    - check_calendar_availability
+    # Google Sheets
+    - export_ynab_summary
+    - read_sheet_range
+    - write_sheet_cells
+    - append_sheet_row
+    - create_spreadsheet
+    # Gmail
     - read_emails
+    - read_email_content
     - send_email
+    - reply_to_email
     - draft_email
     - search_emails
+    # Google Docs
     - create_doc
     - append_to_doc
     - read_doc
+    # Google Drive
+    - search_drive
+    - list_drive_folder
+    - get_file_info
+    # Finley YNAB financial tools
+    - ynab_spending_by_category
+    - ynab_spending_by_payee
+    - ynab_spending_trend
+    - ynab_daily_spending_rate
+    - ynab_top_transactions
+    - ynab_budget_vs_actual
+    - ynab_overspent_categories
+    - ynab_remaining_budget
+    - ynab_days_until_broke
+    - ynab_account_balances
+    - ynab_net_worth
+    - ynab_credit_card_balances
+    - ynab_upcoming_bills
+    - ynab_recurring_summary
+    - ynab_income_vs_expenses
+    - ynab_recent_transactions
+    # Finley profiling tools
+    - finley_get_profile
+    - finley_get_stage
+    - finley_start_cfpb_assessment
+    - finley_submit_cfpb_answer
+    - finley_get_spending_snapshot
+    - finley_get_knowledge
+    # Jack grow management tools
+    - jack_log_checkin
+    - jack_get_grow_status
+    - jack_get_recent_logs
+    - jack_update_grow_stage
+    - jack_log_watering
+    - jack_get_feeding_schedule
+    - jack_compute_vpd
+    - jack_compute_dli
+    - jack_create_grow
+    - jack_setup_tent
+    - jack_list_grows
+    # Coach executive function tools
+    - coach_add_task
+    - coach_list_tasks
+    - coach_complete_task
+    - coach_update_task
+    - coach_add_project
+    - coach_list_projects
+    - coach_project_status
+    - coach_capture_dump
+    - coach_whats_next
+    - coach_plan_day
+    - coach_daily_progress
+    - coach_inbox_review
+    - coach_weekly_review
+    - coach_energy_check
 
 offline:
   cloud_failover_order: [openai, ollama, pi]

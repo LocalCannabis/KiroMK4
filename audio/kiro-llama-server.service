@@ -1,0 +1,28 @@
+[Unit]
+Description=llama.cpp inference server — Orpheus TTS model
+After=network.target
+
+[Service]
+Type=simple
+User=macklemoron
+WorkingDirectory=/home/macklemoron
+Environment=LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libstdc++.so.6
+Environment=LD_LIBRARY_PATH=/usr/local/cuda/lib64:/lib/x86_64-linux-gnu
+Environment=CUDA_VISIBLE_DEVICES=0
+ExecStart=/home/macklemoron/orpheus/venv/bin/python -m llama_cpp.server \
+    --model /home/macklemoron/orpheus/models/orpheus-3b-0.1-ft-Q8_0.gguf \
+    --n_gpu_layers -1 \
+    --n_ctx 8192 \
+    --port 1234 \
+    --host 127.0.0.1 \
+    --chat_format chatml
+Restart=on-failure
+RestartSec=10
+# Give GPU time to settle between restarts
+TimeoutStopSec=30
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=kiro-llama-server
+
+[Install]
+WantedBy=multi-user.target

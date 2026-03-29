@@ -1,0 +1,20 @@
+# Beast server dependencies
+# Install into the kiro_asr conda env:
+#   conda run -n kiro_asr pip install -r requirements-server.txt
+
+flask>=3.0
+gunicorn>=22.0
+pyyaml>=6.0
+requests>=2.31
+numpy>=2.1
+openai>=1.68
+faster-whisper>=1.2
+
+# Kokoro TTS (primary engine — already installed if main Kiro runs)
+# kokoro  # uncomment if not already in env
+
+# Optional: load .env files
+# python-dotenv>=1.0
+
+# Jack master grower persona (PostgreSQL)
+psycopg2-binary>=2.9

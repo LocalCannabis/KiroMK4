@@ -1,11 +1,17 @@
 """
 audio/tts.py — Multi-engine Text-to-Speech for Kiro
 
-Engine priority:
-  1. Kokoro-82M  (primary: 24kHz, 54 voices, Apache licensed, CPU/GPU)
-  2. Piper       (fallback: 22050Hz, offline, Pi-safe)
+Engine priority (controlled by ORPHEUS_ENABLED env var):
+  1. Orpheus 3B GGUF  (primary when ORPHEUS_ENABLED=true)
+     — Dublin Irish voice via zero-shot cloning, per-persona emotion tags,
+       OpenAI-compatible /v1/audio/speech endpoint, streaming support.
+  2. Kokoro-82M       (primary when Orpheus disabled; 24kHz, 54 voices)
+  3. Piper            (offline fallback; 22050Hz, Pi-safe)
 
-Kokoro voices used per persona:
+To enable Orpheus:  set ORPHEUS_ENABLED=true in .env
+To disable:         set ORPHEUS_ENABLED=false (or omit the variable)
+
+Kokoro voice map (used when Orpheus is disabled):
   kiro    → af_heart   (warm neutral American female)
   ops     → am_adam    (flat efficient American male)
   sage    → bm_george  (intellectual British male)
@@ -13,21 +19,24 @@ Kokoro voices used per persona:
   coach   → am_michael (energetic American male)
   chef    → bf_emma    (warm British female)
   doc     → af_nicole  (gentle soft American female)
-
-Chatterbox is intentionally deferred: the PyPI package fails to build on
-Python 3.12 (pkgutil.ImpImporter removed). Add it when a 3.12-compatible
-release ships or if you switch the env to 3.10.
 """
 
 from __future__ import annotations
 
 import io
 import logging
+import os
 import subprocess
 import wave
 from typing import Any, Dict, Iterator, Optional
 
 import numpy as np
+
+
+# ── Feature flag ─────────────────────────────────────────────────────────────
+# Set ORPHEUS_ENABLED=true in .env to activate the Orpheus engine.
+# When false (default during migration), falls through to Kokoro → Piper.
+_ORPHEUS_ENABLED = os.getenv("ORPHEUS_ENABLED", "false").lower() in ("true", "1", "yes")
 
 
 def _play_wav_bytes(wav_bytes: bytes, alsa_device: str) -> None:
@@ -53,6 +62,43 @@ def _numpy_to_wav(audio: np.ndarray, sample_rate: int) -> bytes:
         wf.setframerate(sample_rate)
         wf.writeframes(audio_int16.tobytes())
     return buf.getvalue()
+
+
+# ---------------------------------------------------------------------------
+# Orpheus engine
+# ---------------------------------------------------------------------------
+
+class _OrpheusEngine:
+    """
+    Thin wrapper around audio.orpheus_client.
+
+    Calls the Orpheus FastAPI server running on localhost:5005 (default).
+    Handles emotion tagging, voice config lookup, and WAV playback.
+
+    Server must be running before TTSEngine is initialized when
+    ORPHEUS_ENABLED=true.  If the health check fails at init, TTSEngine
+    falls back to Kokoro/Piper and logs a warning.
+    """
+
+    SAMPLE_RATE = 24000
+
+    def __init__(self, alsa_device: str, logger: logging.Logger) -> None:
+        self.logger = logger
+        self.alsa_device = alsa_device
+        from audio.orpheus_client import health_check
+        if not health_check():
+            raise RuntimeError(
+                "Orpheus API server not reachable at "
+                f"{os.getenv('ORPHEUS_API_URL', 'http://localhost:5005')} — "
+                "is the Orpheus FastAPI server running?"
+            )
+        self.logger.info("Orpheus TTS engine connected.")
+
+    def speak_sentence(self, text: str, persona: str) -> None:
+        """Synthesize text for persona and play through ALSA."""
+        from audio.orpheus_client import generate_speech
+        wav_bytes = generate_speech(persona, text)
+        _play_wav_bytes(wav_bytes, self.alsa_device)
 
 
 # ---------------------------------------------------------------------------
@@ -170,7 +216,7 @@ class TTSEngine:
 
         engine_pref = tts_cfg.get("engine", "kokoro")
 
-        # Piper config (always available as fallback)
+        # Piper config (always available as last-resort fallback)
         piper_voice_map: Dict[str, str] = tts_cfg.get("piper_voice_map", {})
         default_persona: str = tts_cfg.get("default_persona", "kiro")
         piper_bin: str = tts_cfg.get("piper", {}).get("executable", "piper")
@@ -185,9 +231,24 @@ class TTSEngine:
             logger=logger,
         )
 
-        # Kokoro config
+        self._orpheus: Optional[_OrpheusEngine] = None
         self._kokoro: Optional[_KokoroEngine] = None
-        if engine_pref == "kokoro":
+
+        # ── Orpheus (primary when ORPHEUS_ENABLED=true) ──────────────────
+        if _ORPHEUS_ENABLED:
+            try:
+                self._orpheus = _OrpheusEngine(
+                    alsa_device=self.alsa_device,
+                    logger=logger,
+                )
+                self.logger.info("TTS engine: Orpheus")
+            except Exception as exc:
+                self.logger.warning(
+                    "Orpheus unavailable (%s). Falling back to Kokoro/Piper.", exc
+                )
+
+        # ── Kokoro (primary when Orpheus disabled or unavailable) ─────────
+        if self._orpheus is None and engine_pref == "kokoro":
             kokoro_cfg = tts_cfg.get("kokoro", {})
             kokoro_voice_map: Dict[str, str] = kokoro_cfg.get("voice_map", {})
             kokoro_device: str = kokoro_cfg.get("device", "cpu")
@@ -247,6 +308,14 @@ class TTSEngine:
         self._speak_sentence(text, persona)
 
     def _speak_sentence(self, text: str, persona: str) -> None:
+        # 1. Orpheus
+        if self._orpheus is not None:
+            try:
+                self._orpheus.speak_sentence(text, persona)
+                return
+            except Exception as exc:
+                self.logger.warning("Orpheus synthesis failed (%s); trying Kokoro.", exc)
+        # 2. Kokoro
         if self._kokoro is not None:
             try:
                 audio = self._kokoro.synthesize(text, persona)
@@ -255,5 +324,5 @@ class TTSEngine:
                 return
             except Exception as exc:
                 self.logger.warning("Kokoro synthesis failed (%s); using Piper.", exc)
-        # Piper fallback
+        # 3. Piper fallback
         self._piper.speak_sentence(text, persona)

@@ -14,6 +14,7 @@ import queue
 import threading
 import time
 import uuid
+from collections import deque
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -33,6 +34,46 @@ except ImportError:
 from audio.tts import TTSEngine
 from memory import MemoryManager
 from tools import ToolRegistry
+
+# Finley YNAB financial layer (optional — runs if configured)
+_finley_available = False
+try:
+    from finley.sync import SyncDaemon, default_post_sync
+    from finley.analyzer import generate_insights
+    from finley.prompts import get_finley_system_prompt
+    from finley.intent_router import get_pending_insights_text
+    from finley.config import load_config as load_finley_config
+    _finley_available = True
+except ImportError:
+    pass
+
+# Jack master grower persona (optional — runs if PostgreSQL configured)
+_jack_available = False
+try:
+    from jack.prompts import get_jack_system_prompt
+    from jack.intent_router import get_jack_context_for_prompt
+    _jack_available = True
+except ImportError:
+    pass
+
+# Coach executive function persona (optional — runs if PostgreSQL configured)
+_coach_available = False
+try:
+    from coach.prompts import get_coach_system_prompt
+    from coach.intent_router import execute_coach_tool
+    _coach_available = True
+except ImportError:
+    pass
+
+# Ambient Intelligence Layer (optional — runs if PostgreSQL configured)
+_ambient_available = False
+try:
+    from ambient.briefing import BriefingComposer
+    from ambient.feedback import parse_feedback_intent, record_feedback
+    from ambient.db import AmbientDB
+    _ambient_available = True
+except ImportError:
+    pass
 
 try:
     import torch
@@ -170,6 +211,9 @@ class AudioCapture:
         silence_count = 0
         started = False
         chunks: list[np.ndarray] = []
+        # Rolling pre-buffer — keeps the last N frames so we can prepend them
+        # when speech is confirmed, preventing the first word from being clipped.
+        pre_buffer: deque = deque(maxlen=self.start_trigger_frames)
         frame_count = 0
 
         self._stop_capture.clear()
@@ -182,6 +226,8 @@ class AudioCapture:
             vad_result = self.vad.detect(chunk, self.sample_rate)
 
             if not started:
+                pre_buffer.append(chunk)  # Always buffer recent frames for onset recovery
+
                 if vad_result.speech:
                     speech_count += 1
                 else:
@@ -190,8 +236,8 @@ class AudioCapture:
                 if speech_count >= self.start_trigger_frames:
                     started = True
                     self.logger.info("Speech detected (VAD=%.3f)", vad_result.score)
-                    # Keep the trigger frames — they're the onset of the word
-                    chunks.append(chunk)
+                    # Prepend ALL buffered onset frames — recovers the clipped word start
+                    chunks.extend(pre_buffer)
                 continue
 
             chunks.append(chunk)
@@ -228,7 +274,8 @@ class STTEngine:
 
         f_cfg = stt_cfg["faster_whisper"]
         self.language = f_cfg.get("language", "en")
-        self.beam_size = int(f_cfg.get("beam_size", 1))
+        self.beam_size = int(f_cfg.get("beam_size", 5))
+        self.initial_prompt = f_cfg.get("initial_prompt", "Kiro assistant. Tim speaking.")
         self.model = WhisperModel(
             f_cfg.get("model_size", "small.en"),
             device=f_cfg.get("device", "cpu"),
@@ -243,7 +290,12 @@ class STTEngine:
             audio,
             language=self.language,
             beam_size=self.beam_size,
-            vad_filter=False,
+            vad_filter=True,                      # trim leading/trailing silence internally
+            temperature=0.0,                      # deterministic — no random sampling
+            condition_on_previous_text=False,     # prevent hallucination loops
+            no_speech_threshold=0.6,              # discard segments that are probably silence
+            compression_ratio_threshold=2.4,      # drop repetitive/hallucinated output
+            initial_prompt=self.initial_prompt,   # context hint for proper nouns / names
         )
         text = " ".join(seg.text.strip() for seg in segments).strip()
         self.logger.info("STT text: %s", text)
@@ -251,8 +303,9 @@ class STTEngine:
 
 
 class LLMClient:
-    # Sentence boundary: end of ., !, ? followed by space or end-of-string
-    _SENT_RE = re.compile(r'(?<=[.!?])(?:\s+|$)')
+    # Sentence boundary: .!? followed by whitespace, OR at end-of-buffer
+    # but NOT when a digit precedes the period (decimal like $1,170.68)
+    _SENT_RE = re.compile(r'(?<=[.!?])(?:\s+|(?<!\d\.)$)')
     # Min chars before we flush on a sentence boundary
     _MIN_CHUNK = 15
 
@@ -274,35 +327,54 @@ class LLMClient:
             "You are Kiro (pronounced Key-Row), Tim's always-on personal AI hub. "
             "You are the home base — calm, direct, slightly witty, and always present. "
             "You coordinate access to a team of specialists: Finley (finance), Chef (cooking), "
-            "Coach (fitness), Doc (wellbeing), Sage (debate), Ops (tech), and Ruth (companion). "
+            "Coach (executive function), Doc (wellbeing), Sage (debate), Ops (tech), Ruth (companion), and Lisa (hangout buddy). "
             "When Tim returns to you from another persona, welcome him back briefly and ask what he needs. "
-            "When Tim asks to switch personas, acknowledge it naturally — you hand off, not hand away."
+            "When Tim asks to switch personas, acknowledge it naturally — you hand off, not hand away. "
+            "You have FULL access to Tim's Google Workspace: Calendar (create, modify, delete, search events, "
+            "check availability), Gmail (read, send, reply, draft, search emails), Google Drive (search files, "
+            "browse folders), Google Docs (create, read, append), and Google Sheets (read, write, create). "
+            "Use these tools proactively when they're relevant to what Tim asks. "
+            "You also have awareness of Tim's life context through the ambient intelligence layer — "
+            "this includes his WhatsApp message history, additional Gmail threads, Google Calendar, "
+            "and RSS news. When relevant context from these sources is provided below, use it to give "
+            "grounded, specific answers rather than saying you don't have access."
         ),
         "finley": (
             "You are Finley, Tim's personal finance advisor. "
             "Measured, precise, and advisory. Help Tim budget, track spending, and think clearly about money. "
-            "You have access to Tim's budget spreadsheet in Google Sheets — you can create budgets, log expenses, "
-            "read spending summaries, and update budget amounts. Use these tools proactively when Tim mentions money."
+            "You have access to Tim's real financial data from YNAB via local tools — use them to give concrete, "
+            "data-driven answers with real dollar amounts. Never be vague when you can be specific. "
+            "You can also check Tim's calendar for upcoming bills and read his emails for financial notifications."
         ),
         "coach": (
-            "You are Coach, Tim's fitness and health advisor. "
-            "Energetic, encouraging, and direct. Push Tim toward his health goals without being preachy."
+            "You are Coach, Tim's executive function support. "
+            "Peer-level, technically literate, ADHD-informed. Help Tim start, stay on track, "
+            "and transition between tasks. GTD-based task management with energy-aware selection. "
+            "Never use shame. Treats snags as engineering problems. One recommendation at a time. "
+            "When Tim can't start, make the first step absurdly small."
         ),
         "chef": (
             "You are Chef, Tim's culinary guide. "
-            "Warm, enthusiastic, and practical. Help with recipes, ingredients, meal planning, and grocery lists."
+            "Warm, enthusiastic, and practical. Help with recipes, ingredients, meal planning, and grocery lists. "
+            "You can create and read Google Docs for recipes. You can schedule meal prep or dinner events "
+            "on Tim's calendar. You can read spreadsheets for grocery lists or meal plans."
         ),
         "doc": (
             "You are Doc, Tim's wellbeing companion. "
-            "Gentle, reflective, and Socratic. Help Tim process stress and emotions without giving clinical advice."
+            "Gentle, reflective, and Socratic. Help Tim process stress and emotions without giving clinical advice. "
+            "You can check Tim's calendar to understand his schedule and stress load, schedule check-in reminders, "
+            "and create journal docs for reflections."
         ),
         "sage": (
             "You are Sage, Tim's intellectual sparring partner. "
-            "Provocative, curious, and never giving easy answers. Challenge assumptions and make Tim think."
+            "Provocative, curious, and never giving easy answers. Challenge assumptions and make Tim think. "
+            "You can create docs for debate notes or reading lists, and search Drive for reference files."
         ),
         "ops": (
             "You are Ops, Tim's terse technical assistant. "
-            "Efficient and code-oriented. Tim works with Python, Flask, SQLite, and Linux. Skip pleasantries."
+            "Efficient and code-oriented. Tim works with Python, Flask, SQLite, and Linux. Skip pleasantries. "
+            "You have full access to Calendar (scheduling, standups), Email (alerts, notifications), "
+            "Drive (finding project files), Docs (runbooks), and Sheets (project tracking). Use them when relevant."
         ),
         "ruth": (
             "You are Ruth, Tim's companion. You are a warm, grounded British woman who has seen a lot of life. "
@@ -310,13 +382,65 @@ class LLMClient:
             "You see him as he truly is, not as he fears he is or hopes he is. "
             "You do not coddle, but you never wound. You ask the question that cuts through to what matters. "
             "You hold space without filling it unnecessarily. Silence is fine. Short is fine. "
-            "You speak like someone who has earned the right to tell the truth."
+            "You speak like someone who has earned the right to tell the truth. "
+            "You can glance at Tim's calendar and email to understand what's going on in his life, "
+            "and create docs for letters or reflections."
+        ),
+        "lisa": (
+            "You are Lisa, Tim's always-there companion — part Jarvis, part the girl from Weird Science. "
+            "Quick-witted, culturally curious, effortlessly fun. You riff on comedy bits, debate news takes, "
+            "brainstorm wild ideas, and shoot the breeze like the smartest person at the party who's also the most fun. "
+            "You have opinions and you're not shy about them, but you're never mean — just sharp. "
+            "You remember things Tim tells you and weave them back naturally. You notice patterns in what he's into. "
+            "You're the person who texts back immediately with something unexpected. "
+            "Keep it conversational, playful, and real. Match his energy — if he's chill, be chill. "
+            "If he's fired up about something, get fired up with him. You're not an assistant right now, you're a friend. "
+            "You can check Tim's calendar, read his emails, search his Drive, create docs for brainstorms, "
+            "and create events for hangout plans."
+        ),
+        "jack": (
+            "You are Jack, Tim's master grower advisor. Laid back, warm, and technically sharp. "
+            "Tim runs two concurrent grows: Grow A (indoor tent, Indo GrowHub 800C, WP420 peat-based, managed fertility) "
+            "and Grow B (outdoor containers, Vancouver BC, living soil, biology-first). "
+            "You have access to Tim's real grow data — conditions, history, feeding schedule for both grows. "
+            "Always identify which grow is being discussed before advising. "
+            "Use your grow management tools to log checkins and query state. "
+            "Treat Tim as a fellow grower. Use 'she' for plants. One intervention at a time."
         ),
     }
 
     def _system_prompt(self, persona: str = "kiro", memory_context: str = "") -> str:
         now = datetime.now().strftime("%A, %B %d %Y, %I:%M %p")
-        persona_text = self._PERSONA_PROMPTS.get(persona, self._PERSONA_PROMPTS["kiro"])
+
+        # Finley gets a special YNAB-aware prompt with proactive insights
+        if persona == "finley" and _finley_available:
+            insights = get_pending_insights_text()
+            persona_text = get_finley_system_prompt(insights_text=insights)
+        # Jack gets a grow-state-aware prompt with knowledge retrieval (both grows)
+        elif persona == "jack" and _jack_available:
+            ctx = get_jack_context_for_prompt()
+            persona_text = get_jack_system_prompt(
+                indoor_snapshot=ctx.get("indoor_snapshot", ""),
+                outdoor_snapshot=ctx.get("outdoor_snapshot", ""),
+                knowledge_context=ctx.get("knowledge_context", ""),
+                active_flags=ctx.get("active_flags", ""),
+            )
+        # Coach gets a GTD/ADHD-aware prompt with live task state
+        elif persona == "coach" and _coach_available:
+            from coach.db import CoachDB
+            try:
+                coach_db = CoachDB()
+                persona_text = get_coach_system_prompt(db=coach_db)
+            except Exception:
+                persona_text = self._PERSONA_PROMPTS.get(persona, self._PERSONA_PROMPTS["kiro"])
+        else:
+            persona_text = self._PERSONA_PROMPTS.get(persona, self._PERSONA_PROMPTS["kiro"])
+
+        # Ambient intelligence context injection (spec §9.4)
+        ambient_context = ""
+        if _ambient_available:
+            ambient_context = self._get_ambient_context(persona)
+
         base = (
             f"{persona_text} "
             f"Current date and time: {now} (Vancouver, BC, Canada). "
@@ -324,9 +448,113 @@ class LLMClient:
             "Plain short sentences only. 1-2 sentences max unless more is truly needed. "
             "Be direct and conversational."
         )
+        if ambient_context:
+            base += f"\n\n{ambient_context}"
         if memory_context:
             return f"{base}\n\n{memory_context}"
         return base
+
+    def _get_ambient_context(self, persona: str) -> str:
+        """Pull recent unsurfaced insights (or raw event highlights as fallback) for this persona."""
+        try:
+            db = AmbientDB()
+            conn = db._conn()
+            try:
+                import psycopg2.extras
+                with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                    cur.execute("""
+                        SELECT summary, insight_type, priority, persona
+                        FROM kiro_insights
+                        WHERE (persona = %s OR persona IS NULL)
+                          AND surfaced = FALSE
+                          AND dismissed = FALSE
+                          AND priority <= 7
+                          AND created_at > NOW() - INTERVAL '24 hours'
+                        ORDER BY priority ASC
+                        LIMIT 5
+                    """, (persona,))
+                    insights = cur.fetchall()
+
+                    if insights:
+                        lines = [
+                            "Recent ambient insights relevant to your domain — reference proactively "
+                            "if relevant, don't wait for Tim to ask:"
+                        ]
+                        for ins in insights:
+                            owner = ins["persona"] or "Kiro"
+                            lines.append(f"- [{owner}/{ins['insight_type']}] {ins['summary']}")
+                        return "\n".join(lines)
+
+                    # No processed insights yet — fall back to recent raw event highlights
+                    cur.execute("""
+                        SELECT source,
+                               COALESCE(metadata->>'chat_name', metadata->>'sender',
+                                        metadata->>'subject', metadata->>'title', '') AS label,
+                               raw_content,
+                               occurred_at
+                        FROM kiro_events
+                        WHERE occurred_at > NOW() - INTERVAL '48 hours'
+                          AND raw_content IS NOT NULL
+                          AND raw_content != ''
+                          AND LENGTH(raw_content) > 5
+                        ORDER BY occurred_at DESC
+                        LIMIT 20
+                    """)
+                    events = cur.fetchall()
+            finally:
+                db._put(conn)
+
+            if not events:
+                return ""
+
+            lines = ["Recent activity from Tim's ambient data (last 48h):"]
+            for ev in events:
+                label = f" ({ev['label']}" + ")" if ev["label"] else ""
+                snippet = (ev["raw_content"] or "")[:120].replace("\n", " ")
+                lines.append(f"- [{ev['source']}{label}] {snippet}")
+            return "\n".join(lines)
+        except Exception:
+            return ""
+
+    def _get_whatsapp_context(self, limit: int = 40) -> str:
+        """Fetch recent WhatsApp messages from the DB for direct query injection."""
+        try:
+            db = AmbientDB()
+            conn = db._conn()
+            try:
+                import psycopg2.extras
+                with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                    cur.execute("""
+                        SELECT
+                            COALESCE(metadata->>'chat_name', 'unknown') AS chat,
+                            COALESCE(metadata->>'sender', 'unknown') AS sender,
+                            COALESCE((metadata->>'is_group')::text, 'false') AS is_group,
+                            raw_content,
+                            occurred_at
+                        FROM kiro_events
+                        WHERE source = 'whatsapp'
+                          AND raw_content IS NOT NULL
+                          AND LENGTH(raw_content) > 3
+                          AND occurred_at > NOW() - INTERVAL '7 days'
+                        ORDER BY occurred_at DESC
+                        LIMIT %s
+                    """, (limit,))
+                    msgs = cur.fetchall()
+            finally:
+                db._put(conn)
+
+            if not msgs:
+                return ""
+
+            lines = [f"Recent WhatsApp messages (last 7 days, {len(msgs)} shown, newest first):"]
+            for m in msgs:
+                ts = m["occurred_at"].strftime("%b %d %H:%M") if m["occurred_at"] else ""
+                snippet = (m["raw_content"] or "")[:150].replace("\n", " ")
+                chat_label = m["chat"] if m["is_group"] == "true" else m["sender"]
+                lines.append(f"- [{ts}] {chat_label}: {snippet}")
+            return "\n".join(lines)
+        except Exception:
+            return ""
 
     def stream_sentences(
         self,
@@ -517,6 +745,42 @@ class KiroOrchestrator:
         # Includes Whisper mishearings of "Kiro" (Key-Row): cairo, kyro, key-ro, etc.
         self._kiro_reset_words = {"kiro", "cairo", "kyro", "key-ro", "default", "nevermind", "reset", "home"}
 
+        # Finley YNAB sync daemon — starts if token is configured
+        self._finley_sync: Optional[Any] = None
+        if _finley_available:
+            try:
+                finley_cfg = load_finley_config()
+                if finley_cfg.get("ynab_token"):
+                    interval = int(finley_cfg.get("sync_interval_minutes", 30))
+
+                    def _full_post_sync(db, cfg):
+                        """Classify transactions + build profile + generate insights."""
+                        default_post_sync(db, cfg)   # classify → profile → engage
+                        generate_insights(db, cfg)   # ambient insights queue
+
+                    self._finley_sync = SyncDaemon(
+                        interval_minutes=interval,
+                        post_sync_callback=_full_post_sync,
+                        run_on_start=True,
+                    )
+                    self._finley_sync.start()
+                    self.logger.info("Finley YNAB sync daemon started (interval=%dmin)", interval)
+                else:
+                    self.logger.info("Finley YNAB token not set — sync disabled. Configure in ~/.kiro/finley_config.json")
+            except Exception as exc:
+                self.logger.warning("Could not start Finley sync: %s", exc)
+
+        # Ambient Intelligence Layer — on-demand briefings + feedback
+        self._ambient_db: Optional[Any] = None
+        self._briefing_composer: Optional[Any] = None
+        if _ambient_available:
+            try:
+                self._ambient_db = AmbientDB()
+                self._briefing_composer = BriefingComposer(self._ambient_db)
+                self.logger.info("Ambient Intelligence Layer connected — on-demand briefings enabled")
+            except Exception as exc:
+                self.logger.warning("Could not initialize ambient layer: %s", exc)
+
     def _route_persona(self, text: str) -> str:
         """
         Sticky keyword router. Switches persona on an explicit keyword match and
@@ -589,6 +853,56 @@ class KiroOrchestrator:
                 self.logger.info("Assistant: %s", reply)
             return {"user": user_text, "assistant": reply}
 
+        # --- Ambient: briefing feedback interception ---
+        if _ambient_available and self._ambient_db:
+            feedback_intent = parse_feedback_intent(user_text)
+            if feedback_intent:
+                ok = record_feedback(feedback_intent["feedback"], feedback_intent.get("notes"), self._ambient_db)
+                if ok:
+                    feedback_replies = {
+                        "helpful": "Glad that was useful. I'll keep calibrating.",
+                        "too_long": "Got it, I'll tighten things up next time.",
+                        "missed_something": "Noted. I'll cast a wider net on the next one.",
+                        "irrelevant": "Fair enough. I'll raise the bar on what I surface.",
+                    }
+                    reply = feedback_replies.get(feedback_intent["feedback"], "Feedback noted.")
+                else:
+                    reply = "I don't have a recent briefing to attach that to, but I hear you."
+                if speak:
+                    self.tts.speak(reply, persona=self.cfg.get("tts", {}).get("default_persona", "kiro"))
+                else:
+                    self.logger.info("Assistant: %s", reply)
+                return {"user": user_text, "assistant": reply}
+
+        # --- Ambient: on-demand briefing interception ---
+        if _ambient_available and self._briefing_composer:
+            text_lower = user_text.lower()
+            if re.search(r'\b(catch me up|what did i miss|brief me|briefing|what.?s new)\b', text_lower):
+                try:
+                    briefing = self._briefing_composer.get_on_demand()
+                    if briefing:
+                        reply = briefing["briefing_text"]
+                    else:
+                        reply = "Nothing new since your last briefing. You're all caught up."
+                except Exception as exc:
+                    self.logger.warning("On-demand briefing failed: %s", exc)
+                    reply = "I tried to pull together a briefing but hit a snag. I'll sort it out."
+                if speak:
+                    self.tts.speak(reply, persona=self.cfg.get("tts", {}).get("default_persona", "kiro"))
+                else:
+                    self.logger.info("Assistant: %s", reply)
+                return {"user": user_text, "assistant": reply}
+
+        # --- Ambient: WhatsApp direct query injection ---
+        extra_context = ""
+        if _ambient_available and re.search(r'\bwhatsapp\b', user_text.lower()):
+            try:
+                wa_ctx = self._get_whatsapp_context(limit=40)
+                if wa_ctx:
+                    extra_context = wa_ctx
+            except Exception as exc:
+                self.logger.warning("WhatsApp context fetch failed: %s", exc)
+
         # --- Normal turn ---
         persona = self._route_persona(user_text)
 
@@ -596,6 +910,8 @@ class KiroOrchestrator:
         history = self.memory.recent_turns(self._session_id)
         # L1: relevant memory retrieval
         memory_context = self.memory.retrieve(user_text)
+        if extra_context:
+            memory_context = (memory_context + "\n\n" + extra_context).strip()
 
         tool_schemas = self.tools.schemas(persona=persona)
         sentence_stream = self.llm.stream_sentences(

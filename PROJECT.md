@@ -81,11 +81,52 @@ This should shadow /usr/local/cuda copies and fix CUDA for Kokoro and faster-whi
 ## Memory scaffold
 - Disabled. Config includes SQLite path and vector store (chroma) settings. Sprint 2: persist convo history + retrieval.
 
+## Pi 5 Thin Client (kiro-pi)
+Portable voice client: Pi captures audio → sends over Tailscale → Beast processes (STT/LLM/TTS) → returns audio → Pi plays.
+
+### Beast-side (this machine)
+- [kiro_server.py](kiro_server.py): Flask API server (POST /process, GET /health, GET /ping)
+- [kiro_server_config.yaml](kiro_server_config.yaml): Server config (port 5400, STT/LLM/TTS settings)
+- [requirements-server.txt](requirements-server.txt): Flask + gunicorn deps
+- Start: `python kiro_server.py` — binds 0.0.0.0:5400
+- Firewall: `sudo ufw allow in on tailscale0 to any port 5400`
+
+### Pi-side (deploy pi/ directory to Raspberry Pi 5)
+- [pi/kiro_client.py](pi/kiro_client.py): Main client (VAD, state machine, Beast HTTP, playback)
+- [pi/kiro_client_config.yaml](pi/kiro_client_config.yaml): Client config (Beast IP, audio devices, VAD tuning)
+- [pi/audio_test.py](pi/audio_test.py): Audio hardware discovery/test tool
+- [pi/kiro-client.service](pi/kiro-client.service): systemd unit for auto-start
+- [pi/pi_setup.sh](pi/pi_setup.sh): One-shot setup script (deps, Tailscale, venv, systemd)
+- [pi/requirements-client.txt](pi/requirements-client.txt): sounddevice, torch (CPU), silero-vad
+
+### Thin-client data flow
+```
+Pi mic → Silero VAD → WAV chunk → POST /process (Tailscale) → Beast
+Beast: Whisper STT → LLM → Kokoro TTS → WAV response
+Pi ← WAV audio ← Beast → sounddevice.play()
+```
+
+### Testing
+```bash
+# Beast: start server
+python kiro_server.py
+# Test with curl:
+curl -X POST http://localhost:5400/process -H "Content-Type: audio/wav" --data-binary @test.wav -o response.wav
+curl http://localhost:5400/health
+
+# Pi: test audio hardware
+python audio_test.py --record
+# Pi: start client
+python kiro_client.py
+```
+
 ## Known issues / TODO
 1) Fix CUDA/cuDNN so Kokoro and Whisper can run on GPU (RTF should drop to ~0.02x).
 2) Implement persona routing using router.keyword_map.
 3) Enable memory (SQLite + retrieval) per config scaffold.
 4) Chatterbox TTS deferred (PyPI broken on Python 3.12; would need a 3.10 side-env or wait for upstream fix).
+5) Pi thin client: audio streaming optimization (WebSocket) for lower latency.
+6) Pi thin client: wake word detector (OpenWakeWord) to gate VAD for battery savings.
 
 ## Quick commands
 - Download Kokoro weights/voices: `bash scripts/download_kokoro.sh`

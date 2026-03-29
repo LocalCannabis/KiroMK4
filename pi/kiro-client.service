@@ -1,0 +1,52 @@
+# /etc/systemd/system/kiro-client.service
+#
+# Kiro Pi Voice Client — systemd service
+#
+# Install:
+#   sudo cp kiro-client.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable kiro-client
+#   sudo systemctl start kiro-client
+#
+# Logs:
+#   journalctl -u kiro-client -f
+#
+# NOTE: Update User, WorkingDirectory, and ExecStart paths to match your setup.
+
+[Unit]
+Description=Kiro Voice Client (Pi Thin Client)
+Documentation=https://github.com/your-repo/kiro
+After=network-online.target tailscaled.service sound.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi
+Group=audio
+WorkingDirectory=/home/pi/kiro
+ExecStart=/home/pi/kiro/venv/bin/python kiro_client.py --config kiro_client_config.yaml
+Restart=on-failure
+RestartSec=5
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+# Environment
+Environment=PYTHONUNBUFFERED=1
+Environment=XDG_RUNTIME_DIR=/run/user/1000
+
+# Audio: ensure PipeWire/PulseAudio session is accessible
+# (Required for sounddevice to work under systemd)
+Environment=PULSE_SERVER=unix:/run/user/1000/pulse/native
+
+# Resource limits
+Nice=-5
+MemoryMax=512M
+
+# Security
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/home/pi/kiro /home/pi/kiro/logs
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

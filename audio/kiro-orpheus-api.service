@@ -1,0 +1,24 @@
+[Unit]
+Description=Orpheus FastAPI TTS server — Kiro voice engine
+After=network.target kiro-llama-server.service
+Requires=kiro-llama-server.service
+
+[Service]
+Type=simple
+User=macklemoron
+WorkingDirectory=/home/macklemoron/orpheus
+EnvironmentFile=/home/macklemoron/orpheus/.env
+Environment=LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libstdc++.so.6
+Environment=LD_LIBRARY_PATH=/usr/local/cuda/lib64:/lib/x86_64-linux-gnu
+Environment=CUDA_VISIBLE_DEVICES=0
+ExecStartPre=/bin/sleep 5
+ExecStart=/home/macklemoron/miniconda3/envs/kiro_asr/bin/python app.py
+Restart=on-failure
+RestartSec=15
+TimeoutStopSec=30
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=kiro-orpheus-api
+
+[Install]
+WantedBy=multi-user.target

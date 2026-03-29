@@ -8,11 +8,25 @@ openai>=1.68
 faster-whisper>=1.2
 silero-vad>=5.1
 
+# YNAB financial data (Finley persona)
+# NOTE: Must be installed in BOTH envs:
+#   /home/macklemoron/miniconda3/envs/kiro_asr/bin/pip install ynab  (runtime)
+#   source .venv/bin/activate && pip install ynab                     (dev/lint)
+ynab>=0.1
+
 # Google API integrations
 google-api-python-client>=2.100
 google-auth-httplib2>=0.2
 google-auth-oauthlib>=1.0
 python-dateutil>=2.8
+
+# Jack master grower persona (PostgreSQL + pgvector)
+psycopg2-binary>=2.9
+# pgvector Python binding (for embedding storage/retrieval)
+pgvector>=0.3
+
+# Ambient Intelligence Layer (RSS feed ingestion)
+feedparser>=6.0
 
 # Audio capture/playback: handled by system arecord/aplay (ALSA via PipeWire).
 # No sounddevice/soundfile needed in dev profile.

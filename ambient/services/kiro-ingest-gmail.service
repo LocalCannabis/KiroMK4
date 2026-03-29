@@ -1,0 +1,20 @@
+[Unit]
+Description=Kiro Ambient — Gmail Ingestion Worker
+After=network.target postgresql.service
+Wants=postgresql.service
+
+[Service]
+Type=simple
+User=macklemoron
+WorkingDirectory=/home/macklemoron/Projects/KiroMK4
+Environment=PATH=/home/macklemoron/miniconda3/envs/kiro_asr/bin:/usr/local/bin:/usr/bin:/bin
+EnvironmentFile=-/home/macklemoron/.kiro/ambient.env
+ExecStart=/home/macklemoron/miniconda3/envs/kiro_asr/bin/python -m ambient.ingest.ingest_gmail
+Restart=on-failure
+RestartSec=30
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=kiro-ingest-gmail
+
+[Install]
+WantedBy=multi-user.target

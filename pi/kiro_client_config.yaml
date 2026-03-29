@@ -1,0 +1,80 @@
+# =============================================================================
+# Kiro Pi Thin Client Configuration
+# =============================================================================
+# Portable voice client for Raspberry Pi 5. Captures audio, detects speech
+# via local VAD, sends to the Beast for processing, plays back response.
+#
+# Usage:
+#   python kiro_client.py --config kiro_client_config.yaml
+#
+# To find the right device indices, run:
+#   python audio_test.py
+
+# ---------------------------------------------------------------------------
+# Beast connection (Tailscale)
+# ---------------------------------------------------------------------------
+beast:
+  host: "100.x.x.x"       # Beast's Tailscale IP (or MagicDNS name like "kiro-beast")
+  port: 5400
+  health_check_interval_s: 60
+
+# ---------------------------------------------------------------------------
+# Audio hardware
+# ---------------------------------------------------------------------------
+# Set to null for system default, or specify device index/name.
+# Run `python audio_test.py` to list available devices.
+audio:
+  input_device: null       # null = default | int (index) | str (name substring)
+  output_device: null      # null = default | int (index) | str (name substring)
+  sample_rate: 16000       # Whisper expects 16kHz
+  channels: 1              # Mono
+  block_size: 512          # Silero VAD v5 needs exactly 512 samples at 16kHz
+
+# ---------------------------------------------------------------------------
+# Voice Activity Detection (Silero VAD, runs locally on Pi CPU)
+# ---------------------------------------------------------------------------
+vad:
+  threshold: 0.5           # Silero confidence threshold (0.0 - 1.0)
+  start_trigger_frames: 6  # Consecutive speech frames to start recording
+  silence_duration_ms: 800 # Silence after speech to stop recording
+  pre_buffer_ms: 300       # Audio to keep before speech onset
+  min_speech_ms: 500       # Minimum speech to bother sending
+  max_utterance_s: 20      # Hard cap on utterance length
+
+# ---------------------------------------------------------------------------
+# Network & resilience
+# ---------------------------------------------------------------------------
+connection:
+  timeout_s: 30            # HTTP request timeout
+  retry_attempts: 3        # Retries on transient failure
+  retry_delay_s: 1         # Base delay between retries
+  reconnect_max_delay_s: 60  # Max backoff delay for reconnection
+
+# ---------------------------------------------------------------------------
+# Session
+# ---------------------------------------------------------------------------
+session:
+  # Persistent session ID survives restarts. Set to null for auto-generate.
+  id: null
+  # Persona override (null = let Beast route by keywords)
+  persona: null
+
+# ---------------------------------------------------------------------------
+# UI / feedback
+# ---------------------------------------------------------------------------
+feedback:
+  # Print state transitions to terminal
+  verbose: true
+  # Play a short beep/sound on state changes (requires audio files)
+  audio_cues: false
+  # Audio cue files (WAV, relative to client directory)
+  cue_listening: null      # e.g., "cues/listening.wav"
+  cue_processing: null
+  cue_error: null
+
+# ---------------------------------------------------------------------------
+# Logging
+# ---------------------------------------------------------------------------
+logging:
+  level: "INFO"
+  file: "./logs/kiro_client.log"
