@@ -446,6 +446,420 @@ class JackDB:
             self._put(conn)
 
     # =========================================================================
+    # Sensor Readings (ESP32)
+    # =========================================================================
+    def insert_sensor_reading(self, grow_id: int, **kwargs) -> Dict[str, Any]:
+        """
+        Insert a sensor reading from the ESP32 (or manual source).
+        Computes VPD on the fly if temp and humidity are present.
+        """
+        fields: Dict[str, Any] = {"grow_id": grow_id}
+
+        sensor_cols = [
+            "temp_c", "humidity_pct", "ppfd",
+            "soil_moisture_1", "soil_moisture_2",
+            "relay_1_on", "relay_2_on", "vpd_kpa", "source",
+        ]
+        for col in sensor_cols:
+            if col in kwargs and kwargs[col] is not None:
+                fields[col] = kwargs[col]
+
+        # Auto-compute VPD if not provided but temp + humidity are
+        if "vpd_kpa" not in fields and fields.get("temp_c") and fields.get("humidity_pct"):
+            import math
+            t = float(fields["temp_c"])
+            h = float(fields["humidity_pct"])
+            svp_air = 0.6108 * math.exp((17.27 * t) / (t + 237.3))
+            leaf_t = t - 2.0
+            svp_leaf = 0.6108 * math.exp((17.27 * leaf_t) / (leaf_t + 237.3))
+            fields["vpd_kpa"] = round(max(0.0, svp_leaf - svp_air * (h / 100.0)), 2)
+
+        cols = ", ".join(fields.keys())
+        placeholders = ", ".join(["%s"] * len(fields))
+
+        conn = self._conn()
+        try:
+            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                cur.execute(
+                    f"INSERT INTO sensor_readings ({cols}) VALUES ({placeholders}) RETURNING *",
+                    list(fields.values()),
+                )
+                row = cur.fetchone()
+            conn.commit()
+            return dict(row)
+        finally:
+            self._put(conn)
+
+    def get_latest_sensor_reading(self, grow_id: int) -> Optional[Dict[str, Any]]:
+        """Get the single most recent sensor reading for a grow."""
+        conn = self._conn()
+        try:
+            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                cur.execute(
+                    "SELECT * FROM sensor_readings WHERE grow_id = %s "
+                    "ORDER BY recorded_at DESC LIMIT 1",
+                    (grow_id,),
+                )
+                row = cur.fetchone()
+            return dict(row) if row else None
+        finally:
+            self._put(conn)
+
+    def get_sensor_history(
+        self,
+        grow_id: int,
+        minutes: int = 60,
+        limit: int = 500,
+    ) -> List[Dict[str, Any]]:
+        """
+        Get sensor readings for a grow within a time window.
+        Returns newest-first, capped at `limit` rows.
+        """
+        conn = self._conn()
+        try:
+            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                cur.execute(
+                    "SELECT * FROM sensor_readings "
+                    "WHERE grow_id = %s AND recorded_at >= NOW() - INTERVAL '%s minutes' "
+                    "ORDER BY recorded_at DESC LIMIT %s",
+                    (grow_id, minutes, limit),
+                )
+                return [dict(r) for r in cur.fetchall()]
+        finally:
+            self._put(conn)
+
+    def get_sensor_stats(self, grow_id: int, minutes: int = 60) -> Dict[str, Any]:
+        """
+        Get aggregated sensor stats (min/max/avg) over the given time window.
+        """
+        conn = self._conn()
+        try:
+            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                cur.execute(
+                    """
+                    SELECT
+                        COUNT(*) as reading_count,
+                        MIN(temp_c) as temp_min, MAX(temp_c) as temp_max, AVG(temp_c) as temp_avg,
+                        MIN(humidity_pct) as hum_min, MAX(humidity_pct) as hum_max, AVG(humidity_pct) as hum_avg,
+                        MIN(ppfd) as ppfd_min, MAX(ppfd) as ppfd_max, AVG(ppfd) as ppfd_avg,
+                        MIN(vpd_kpa) as vpd_min, MAX(vpd_kpa) as vpd_max, AVG(vpd_kpa) as vpd_avg,
+                        AVG(soil_moisture_1) as soil1_avg, AVG(soil_moisture_2) as soil2_avg,
+                        MIN(recorded_at) as window_start, MAX(recorded_at) as window_end
+                    FROM sensor_readings
+                    WHERE grow_id = %s AND recorded_at >= NOW() - INTERVAL '%s minutes'
+                    """,
+                    (grow_id, minutes),
+                )
+                row = cur.fetchone()
+            return dict(row) if row else {}
+        finally:
+            self._put(conn)
+
+    # =========================================================================
+    # Relay Events
+    # =========================================================================
+    def insert_relay_event(
+        self, grow_id: Optional[int], relay_id: int,
+        action: str, source: str, reason: str = "",
+    ) -> Dict[str, Any]:
+        """Record a relay state change."""
+        conn = self._conn()
+        try:
+            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                cur.execute(
+                    "INSERT INTO relay_events (grow_id, relay_id, action, source, reason) "
+                    "VALUES (%s, %s, %s, %s, %s) RETURNING *",
+                    (grow_id, relay_id, action, source, reason),
+                )
+                row = cur.fetchone()
+            conn.commit()
+            return dict(row)
+        finally:
+            self._put(conn)
+
+    def get_relay_events(
+        self, grow_id: int, relay_id: Optional[int] = None, limit: int = 20,
+    ) -> List[Dict[str, Any]]:
+        """Get recent relay events for a grow, optionally filtered by relay_id."""
+        conn = self._conn()
+        try:
+            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                if relay_id is not None:
+                    cur.execute(
+                        "SELECT * FROM relay_events WHERE grow_id = %s AND relay_id = %s "
+                        "ORDER BY recorded_at DESC LIMIT %s",
+                        (grow_id, relay_id, limit),
+                    )
+                else:
+                    cur.execute(
+                        "SELECT * FROM relay_events WHERE grow_id = %s "
+                        "ORDER BY recorded_at DESC LIMIT %s",
+                        (grow_id, limit),
+                    )
+                return [dict(r) for r in cur.fetchall()]
+        finally:
+            self._put(conn)
+
+    # =========================================================================
+    # Grow Thresholds
+    # =========================================================================
+    def get_thresholds(self, grow_id: int) -> Optional[Dict[str, Any]]:
+        """Get the alert thresholds for a grow."""
+        conn = self._conn()
+        try:
+            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                cur.execute(
+                    "SELECT * FROM grow_thresholds WHERE grow_id = %s", (grow_id,),
+                )
+                row = cur.fetchone()
+            return dict(row) if row else None
+        finally:
+            self._put(conn)
+
+    def upsert_thresholds(self, grow_id: int, **kwargs) -> Dict[str, Any]:
+        """Create or update alert thresholds for a grow."""
+        existing = self.get_thresholds(grow_id)
+        allowed = {
+            "temp_min_c", "temp_max_c", "humidity_min_pct", "humidity_max_pct",
+            "vpd_min_kpa", "vpd_max_kpa", "ppfd_min", "ppfd_max",
+            "soil_moisture_min", "soil_moisture_max",
+            "humidifier_on_below", "alert_cooldown_min",
+        }
+        conn = self._conn()
+        try:
+            if existing:
+                updates = {k: v for k, v in kwargs.items() if k in allowed and v is not None}
+                updates["updated_at"] = datetime.now()
+                set_clause = ", ".join(f"{k} = %s" for k in updates)
+                values = list(updates.values()) + [grow_id]
+                with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                    cur.execute(
+                        f"UPDATE grow_thresholds SET {set_clause} WHERE grow_id = %s RETURNING *",
+                        values,
+                    )
+                    row = cur.fetchone()
+            else:
+                fields = {"grow_id": grow_id}
+                fields.update({k: v for k, v in kwargs.items() if k in allowed and v is not None})
+                cols = ", ".join(fields.keys())
+                placeholders = ", ".join(["%s"] * len(fields))
+                with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                    cur.execute(
+                        f"INSERT INTO grow_thresholds ({cols}) VALUES ({placeholders}) RETURNING *",
+                        list(fields.values()),
+                    )
+                    row = cur.fetchone()
+            conn.commit()
+            return dict(row)
+        finally:
+            self._put(conn)
+
+    # =========================================================================
+    # Sensor Rollups + Retention
+    # =========================================================================
+
+    def rollup_hourly(self, grow_id: int, hours_back: int = 2) -> int:
+        """
+        Aggregate raw sensor_readings into sensor_readings_hourly.
+
+        Processes the last `hours_back` hours to catch any stragglers.
+        Uses INSERT ... ON CONFLICT to safely re-run (idempotent).
+        Returns the number of hourly buckets upserted.
+        """
+        sql = """
+            INSERT INTO sensor_readings_hourly (
+                grow_id, bucket_hour, reading_count,
+                temp_min, temp_max, temp_avg,
+                humidity_min, humidity_max, humidity_avg,
+                vpd_min, vpd_max, vpd_avg,
+                ppfd_min, ppfd_max, ppfd_avg,
+                soil1_min, soil1_max, soil1_avg,
+                soil2_min, soil2_max, soil2_avg,
+                relay1_on_pct, relay2_on_pct
+            )
+            SELECT
+                grow_id,
+                date_trunc('hour', recorded_at) AS bucket_hour,
+                COUNT(*)::INTEGER,
+                MIN(temp_c), MAX(temp_c), ROUND(AVG(temp_c), 2),
+                MIN(humidity_pct), MAX(humidity_pct), ROUND(AVG(humidity_pct), 2),
+                MIN(vpd_kpa), MAX(vpd_kpa), ROUND(AVG(vpd_kpa), 2),
+                MIN(ppfd), MAX(ppfd), ROUND(AVG(ppfd), 2),
+                MIN(soil_moisture_1), MAX(soil_moisture_1), ROUND(AVG(soil_moisture_1), 1),
+                MIN(soil_moisture_2), MAX(soil_moisture_2), ROUND(AVG(soil_moisture_2), 1),
+                ROUND(100.0 * SUM(CASE WHEN relay_1_on THEN 1 ELSE 0 END)::DECIMAL / GREATEST(COUNT(*), 1), 1),
+                ROUND(100.0 * SUM(CASE WHEN relay_2_on THEN 1 ELSE 0 END)::DECIMAL / GREATEST(COUNT(*), 1), 1)
+            FROM sensor_readings
+            WHERE grow_id = %s
+              AND recorded_at >= date_trunc('hour', NOW()) - INTERVAL '%s hours'
+            GROUP BY grow_id, date_trunc('hour', recorded_at)
+            ON CONFLICT (grow_id, bucket_hour) DO UPDATE SET
+                reading_count   = EXCLUDED.reading_count,
+                temp_min        = EXCLUDED.temp_min,
+                temp_max        = EXCLUDED.temp_max,
+                temp_avg        = EXCLUDED.temp_avg,
+                humidity_min    = EXCLUDED.humidity_min,
+                humidity_max    = EXCLUDED.humidity_max,
+                humidity_avg    = EXCLUDED.humidity_avg,
+                vpd_min         = EXCLUDED.vpd_min,
+                vpd_max         = EXCLUDED.vpd_max,
+                vpd_avg         = EXCLUDED.vpd_avg,
+                ppfd_min        = EXCLUDED.ppfd_min,
+                ppfd_max        = EXCLUDED.ppfd_max,
+                ppfd_avg        = EXCLUDED.ppfd_avg,
+                soil1_min       = EXCLUDED.soil1_min,
+                soil1_max       = EXCLUDED.soil1_max,
+                soil1_avg       = EXCLUDED.soil1_avg,
+                soil2_min       = EXCLUDED.soil2_min,
+                soil2_max       = EXCLUDED.soil2_max,
+                soil2_avg       = EXCLUDED.soil2_avg,
+                relay1_on_pct   = EXCLUDED.relay1_on_pct,
+                relay2_on_pct   = EXCLUDED.relay2_on_pct
+        """
+        conn = self._conn()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(sql, (grow_id, hours_back))
+                count = cur.rowcount
+            conn.commit()
+            return count
+        finally:
+            self._put(conn)
+
+    def rollup_daily(self, grow_id: int, days_back: int = 2) -> int:
+        """
+        Aggregate sensor_readings_hourly into sensor_readings_daily.
+
+        Computes DLI (daily light integral) from hourly PPFD averages and
+        light-hours from hours where PPFD > 10 µmol/m²/s.
+        Returns number of daily buckets upserted.
+        """
+        sql = """
+            INSERT INTO sensor_readings_daily (
+                grow_id, bucket_date, reading_count,
+                temp_min, temp_max, temp_avg,
+                humidity_min, humidity_max, humidity_avg,
+                vpd_min, vpd_max, vpd_avg,
+                ppfd_min, ppfd_max, ppfd_avg,
+                soil1_avg, soil2_avg,
+                light_hours, dli_mol,
+                relay1_on_pct, relay2_on_pct
+            )
+            SELECT
+                grow_id,
+                bucket_hour::DATE AS bucket_date,
+                SUM(reading_count)::INTEGER,
+                MIN(temp_min), MAX(temp_max), ROUND(AVG(temp_avg), 2),
+                MIN(humidity_min), MAX(humidity_max), ROUND(AVG(humidity_avg), 2),
+                MIN(vpd_min), MAX(vpd_max), ROUND(AVG(vpd_avg), 2),
+                MIN(ppfd_min), MAX(ppfd_max), ROUND(AVG(ppfd_avg), 2),
+                ROUND(AVG(soil1_avg), 1),
+                ROUND(AVG(soil2_avg), 1),
+                -- Light hours: count of hourly buckets where avg PPFD > 10
+                SUM(CASE WHEN ppfd_avg > 10 THEN 1 ELSE 0 END)::DECIMAL(4,1),
+                -- DLI: sum of (hourly_avg_ppfd * 3600 seconds) / 1,000,000
+                ROUND(SUM(COALESCE(ppfd_avg, 0) * 3600) / 1000000.0, 2),
+                ROUND(AVG(relay1_on_pct), 1),
+                ROUND(AVG(relay2_on_pct), 1)
+            FROM sensor_readings_hourly
+            WHERE grow_id = %s
+              AND bucket_hour::DATE >= (CURRENT_DATE - %s)
+            GROUP BY grow_id, bucket_hour::DATE
+            ON CONFLICT (grow_id, bucket_date) DO UPDATE SET
+                reading_count   = EXCLUDED.reading_count,
+                temp_min        = EXCLUDED.temp_min,
+                temp_max        = EXCLUDED.temp_max,
+                temp_avg        = EXCLUDED.temp_avg,
+                humidity_min    = EXCLUDED.humidity_min,
+                humidity_max    = EXCLUDED.humidity_max,
+                humidity_avg    = EXCLUDED.humidity_avg,
+                vpd_min         = EXCLUDED.vpd_min,
+                vpd_max         = EXCLUDED.vpd_max,
+                vpd_avg         = EXCLUDED.vpd_avg,
+                ppfd_min        = EXCLUDED.ppfd_min,
+                ppfd_max        = EXCLUDED.ppfd_max,
+                ppfd_avg        = EXCLUDED.ppfd_avg,
+                soil1_avg       = EXCLUDED.soil1_avg,
+                soil2_avg       = EXCLUDED.soil2_avg,
+                light_hours     = EXCLUDED.light_hours,
+                dli_mol         = EXCLUDED.dli_mol,
+                relay1_on_pct   = EXCLUDED.relay1_on_pct,
+                relay2_on_pct   = EXCLUDED.relay2_on_pct
+        """
+        conn = self._conn()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(sql, (grow_id, days_back))
+                count = cur.rowcount
+            conn.commit()
+            return count
+        finally:
+            self._put(conn)
+
+    def prune_raw_readings(self, grow_id: int, retain_days: int = 7) -> int:
+        """
+        Delete raw sensor_readings older than `retain_days` days.
+
+        Only deletes rows that have already been rolled up (i.e., whose
+        hour bucket exists in sensor_readings_hourly). Safety net: never
+        deletes anything less than 24 hours old regardless of retain_days.
+        Returns number of rows deleted.
+        """
+        sql = """
+            DELETE FROM sensor_readings
+            WHERE grow_id = %s
+              AND recorded_at < NOW() - INTERVAL '%s days'
+              AND recorded_at < NOW() - INTERVAL '24 hours'
+              AND date_trunc('hour', recorded_at) IN (
+                  SELECT bucket_hour FROM sensor_readings_hourly
+                  WHERE grow_id = %s
+              )
+        """
+        conn = self._conn()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(sql, (grow_id, retain_days, grow_id))
+                count = cur.rowcount
+            conn.commit()
+            return count
+        finally:
+            self._put(conn)
+
+    def get_hourly_history(
+        self, grow_id: int, hours: int = 24,
+    ) -> List[Dict[str, Any]]:
+        """Get hourly rollup data for a grow. Newest first."""
+        conn = self._conn()
+        try:
+            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                cur.execute(
+                    "SELECT * FROM sensor_readings_hourly "
+                    "WHERE grow_id = %s AND bucket_hour >= NOW() - INTERVAL '%s hours' "
+                    "ORDER BY bucket_hour DESC",
+                    (grow_id, hours),
+                )
+                return [dict(r) for r in cur.fetchall()]
+        finally:
+            self._put(conn)
+
+    def get_daily_history(
+        self, grow_id: int, days: int = 30,
+    ) -> List[Dict[str, Any]]:
+        """Get daily rollup data for a grow. Newest first."""
+        conn = self._conn()
+        try:
+            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                cur.execute(
+                    "SELECT * FROM sensor_readings_daily "
+                    "WHERE grow_id = %s AND bucket_date >= CURRENT_DATE - %s "
+                    "ORDER BY bucket_date DESC",
+                    (grow_id, days),
+                )
+                return [dict(r) for r in cur.fetchall()]
+        finally:
+            self._put(conn)
+
+    # =========================================================================
     # Utility: stale data detection
     # =========================================================================
     def get_stale_readings(

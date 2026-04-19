@@ -113,6 +113,13 @@ light:
   fan_cfm: 105                # integrated exhaust fan max CFM
 
 # ── Confidence Framework ──────────────────────────────────────────────────
+# Sensor data retention / rollup
+sensor_retention:
+  raw_retain_days: 7           # keep raw 10-s readings for this many days
+  rollup_interval_minutes: 60  # how often the daemon runs rollup+prune
+  hourly_lookback_hours: 2     # re-aggregate this many hours each pass
+  daily_lookback_days: 2       # re-aggregate this many days each pass
+
 confidence:
   high_min_sources: 2
   medium_min_sources: 1

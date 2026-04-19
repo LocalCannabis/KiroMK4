@@ -1,0 +1,584 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>KIRO — Grow Monitor</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-root: #0D0F0E;
+            --bg-card: #131614;
+            --bg-card-hover: #1A1E1B;
+            --bg-input: #1A1E1B;
+            --text-primary: #E8E6E1;
+            --text-secondary: #8A8880;
+            --text-tertiary: #5A5850;
+            --border-subtle: #1E2220;
+            --border-medium: #2A2E2B;
+            --accent: #6BBF59;
+            --accent-dim: #3D7A30;
+            --red: #E05555;
+            --red-dim: #8B3030;
+            --yellow: #D4A843;
+            --yellow-dim: #8A7233;
+            --blue: #5B9BD5;
+            --font-body: 'DM Sans', -apple-system, sans-serif;
+            --font-mono: 'JetBrains Mono', monospace;
+            --radius-sm: 6px;
+            --radius-md: 10px;
+            --radius-lg: 14px;
+        }
+
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+        body {
+            font-family: var(--font-body);
+            background: var(--bg-root);
+            color: var(--text-primary);
+            min-height: 100vh;
+            -webkit-font-smoothing: antialiased;
+        }
+
+        /* ── Header ─────────────────────────────────────────────── */
+        .header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 16px 24px;
+            border-bottom: 1px solid var(--border-subtle);
+            background: var(--bg-card);
+        }
+        .header-left { display: flex; align-items: center; gap: 12px; }
+        .header h1 {
+            font-size: 18px;
+            font-weight: 600;
+            letter-spacing: 0.5px;
+        }
+        .header h1 span { color: var(--accent); }
+        .status-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 12px;
+            color: var(--text-secondary);
+            padding: 4px 10px;
+            border-radius: 20px;
+            background: var(--bg-input);
+        }
+        .status-dot {
+            width: 8px; height: 8px;
+            border-radius: 50%;
+            background: var(--text-tertiary);
+        }
+        .status-dot.live { background: var(--accent); animation: pulse 2s infinite; }
+        .status-dot.offline { background: var(--red); }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.4; }
+        }
+        .grow-info {
+            font-size: 13px;
+            color: var(--text-secondary);
+        }
+        .back-link {
+            color: var(--text-secondary);
+            text-decoration: none;
+            font-size: 13px;
+            transition: color 0.15s;
+        }
+        .back-link:hover { color: var(--text-primary); }
+
+        /* ── Grid ───────────────────────────────────────────────── */
+        .dashboard {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 16px;
+            padding: 20px 24px;
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+
+        /* ── Cards ──────────────────────────────────────────────── */
+        .card {
+            background: var(--bg-card);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-lg);
+            padding: 20px;
+            transition: border-color 0.2s;
+        }
+        .card:hover { border-color: var(--border-medium); }
+        .card-label {
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 1.2px;
+            color: var(--text-tertiary);
+            margin-bottom: 8px;
+        }
+        .card-value {
+            font-family: var(--font-mono);
+            font-size: 36px;
+            font-weight: 500;
+            line-height: 1.1;
+        }
+        .card-unit {
+            font-size: 16px;
+            color: var(--text-secondary);
+            margin-left: 4px;
+        }
+        .card-range {
+            font-size: 12px;
+            color: var(--text-tertiary);
+            margin-top: 6px;
+        }
+        .card-sparkline {
+            margin-top: 12px;
+            height: 40px;
+        }
+        .card-sparkline canvas {
+            width: 100%;
+            height: 40px;
+        }
+
+        /* Flag states */
+        .card.flag-high { border-color: var(--red-dim); }
+        .card.flag-high .card-value { color: var(--red); }
+        .card.flag-low { border-color: var(--yellow-dim); }
+        .card.flag-low .card-value { color: var(--yellow); }
+        .card.flag-ok .card-value { color: var(--accent); }
+
+        /* ── Relay cards ────────────────────────────────────────── */
+        .relay-card {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+        .relay-status {
+            font-family: var(--font-mono);
+            font-size: 20px;
+            font-weight: 600;
+        }
+        .relay-status.on { color: var(--accent); }
+        .relay-status.off { color: var(--text-tertiary); }
+
+        .toggle-btn {
+            padding: 8px 20px;
+            border-radius: var(--radius-sm);
+            border: 1px solid var(--border-medium);
+            background: var(--bg-input);
+            color: var(--text-primary);
+            font-family: var(--font-body);
+            font-size: 13px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.15s;
+        }
+        .toggle-btn:hover {
+            background: var(--bg-card-hover);
+            border-color: var(--accent-dim);
+        }
+        .toggle-btn.on {
+            background: var(--accent-dim);
+            border-color: var(--accent);
+            color: white;
+        }
+
+        /* ── Flags banner ───────────────────────────────────────── */
+        .flags-banner {
+            margin: 0 24px;
+            padding: 12px 16px;
+            background: var(--red-dim);
+            border: 1px solid var(--red);
+            border-radius: var(--radius-md);
+            color: var(--text-primary);
+            font-size: 13px;
+            display: none;
+        }
+        .flags-banner.visible { display: block; }
+        .flags-banner .flag-icon { margin-right: 8px; }
+
+        /* ── Relay events log ───────────────────────────────────── */
+        .wide-card { grid-column: 1 / -1; }
+        .event-list { list-style: none; }
+        .event-list li {
+            display: flex;
+            gap: 16px;
+            padding: 6px 0;
+            font-size: 13px;
+            border-bottom: 1px solid var(--border-subtle);
+        }
+        .event-list li:last-child { border-bottom: none; }
+        .event-time {
+            font-family: var(--font-mono);
+            color: var(--text-tertiary);
+            min-width: 60px;
+        }
+        .event-action { color: var(--text-secondary); }
+
+        /* ── Last updated ───────────────────────────────────────── */
+        .last-updated {
+            text-align: center;
+            padding: 16px;
+            font-size: 12px;
+            color: var(--text-tertiary);
+        }
+
+        /* ── Responsive ─────────────────────────────────────────── */
+        @media (max-width: 600px) {
+            .dashboard { padding: 12px; gap: 12px; }
+            .card-value { font-size: 28px; }
+            .header { padding: 12px 16px; }
+            .flags-banner { margin: 0 12px; }
+        }
+    </style>
+</head>
+<body>
+
+<div class="header">
+    <div class="header-left">
+        <h1>KIRO <span>Grow</span></h1>
+        <span class="status-badge">
+            <span class="status-dot" id="statusDot"></span>
+            <span id="statusText">connecting...</span>
+        </span>
+    </div>
+    <div>
+        <span class="grow-info" id="growInfo">—</span>
+        &nbsp;&nbsp;
+        <a href="/" class="back-link">← Chat</a>
+    </div>
+</div>
+
+<div class="flags-banner" id="flagsBanner">
+    <span class="flag-icon">⚠</span>
+    <span id="flagsText"></span>
+</div>
+
+<div class="dashboard" id="dashboard">
+    <!-- Temperature -->
+    <div class="card" id="cardTemp">
+        <div class="card-label">Temperature</div>
+        <div class="card-value"><span id="valTemp">—</span><span class="card-unit">°C</span></div>
+        <div class="card-range" id="rangeTemp"></div>
+        <div class="card-sparkline"><canvas id="sparkTemp"></canvas></div>
+    </div>
+
+    <!-- Humidity -->
+    <div class="card" id="cardHum">
+        <div class="card-label">Humidity</div>
+        <div class="card-value"><span id="valHum">—</span><span class="card-unit">%</span></div>
+        <div class="card-range" id="rangeHum"></div>
+        <div class="card-sparkline"><canvas id="sparkHum"></canvas></div>
+    </div>
+
+    <!-- VPD -->
+    <div class="card" id="cardVpd">
+        <div class="card-label">VPD</div>
+        <div class="card-value"><span id="valVpd">—</span><span class="card-unit">kPa</span></div>
+        <div class="card-range" id="rangeVpd"></div>
+        <div class="card-sparkline"><canvas id="sparkVpd"></canvas></div>
+    </div>
+
+    <!-- PPFD -->
+    <div class="card" id="cardPpfd">
+        <div class="card-label">PPFD</div>
+        <div class="card-value"><span id="valPpfd">—</span><span class="card-unit">µmol</span></div>
+        <div class="card-range" id="rangePpfd"></div>
+        <div class="card-sparkline"><canvas id="sparkPpfd"></canvas></div>
+    </div>
+
+    <!-- Soil Moisture 1 -->
+    <div class="card" id="cardSoil1">
+        <div class="card-label">Soil Moisture — Probe 1</div>
+        <div class="card-value"><span id="valSoil1">—</span><span class="card-unit">%</span></div>
+        <div class="card-range" id="rangeSoil1"></div>
+    </div>
+
+    <!-- Soil Moisture 2 -->
+    <div class="card" id="cardSoil2">
+        <div class="card-label">Soil Moisture — Probe 2</div>
+        <div class="card-value"><span id="valSoil2">—</span><span class="card-unit">%</span></div>
+        <div class="card-range" id="rangeSoil2"></div>
+    </div>
+
+    <!-- SSR1 Humidifier -->
+    <div class="card">
+        <div class="card-label">Humidifier (SSR1)</div>
+        <div class="relay-card">
+            <span class="relay-status" id="relayStatus1">—</span>
+            <button class="toggle-btn" id="relayBtn1" onclick="toggleRelay(1)">Toggle</button>
+        </div>
+    </div>
+
+    <!-- SSR2 Reserved -->
+    <div class="card">
+        <div class="card-label">SSR2 (Reserved)</div>
+        <div class="relay-card">
+            <span class="relay-status" id="relayStatus2">—</span>
+            <button class="toggle-btn" id="relayBtn2" onclick="toggleRelay(2)">Toggle</button>
+        </div>
+    </div>
+
+    <!-- Relay event log -->
+    <div class="card wide-card">
+        <div class="card-label">Relay Activity</div>
+        <ul class="event-list" id="relayEvents">
+            <li><span class="event-time">—</span><span class="event-action">No events yet</span></li>
+        </ul>
+    </div>
+</div>
+
+<div class="last-updated">
+    Last updated: <span id="lastUpdated">—</span> · Refreshes every 5s
+</div>
+
+<script>
+// ── State ────────────────────────────────────────────────────
+const POLL_INTERVAL = 5000;
+const HISTORY_MINUTES = 60;
+const sparkData = { temp: [], hum: [], vpd: [], ppfd: [] };
+const MAX_SPARK = 60;
+let currentRelayState = { 1: false, 2: false };
+let thresholds = null;
+
+// ── Sparkline renderer ───────────────────────────────────────
+function drawSparkline(canvasId, data, color = '#6BBF59', minY = null, maxY = null) {
+    const canvas = document.getElementById(canvasId);
+    if (!canvas || data.length < 2) return;
+    const ctx = canvas.getContext('2d');
+    const dpr = window.devicePixelRatio || 1;
+    const rect = canvas.getBoundingClientRect();
+    canvas.width = rect.width * dpr;
+    canvas.height = rect.height * dpr;
+    ctx.scale(dpr, dpr);
+    ctx.clearRect(0, 0, rect.width, rect.height);
+
+    const mn = minY !== null ? minY : Math.min(...data);
+    const mx = maxY !== null ? maxY : Math.max(...data);
+    const range = mx - mn || 1;
+    const pad = 2;
+    const w = rect.width;
+    const h = rect.height;
+
+    ctx.beginPath();
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 1.5;
+    ctx.lineJoin = 'round';
+
+    for (let i = 0; i < data.length; i++) {
+        const x = (i / (data.length - 1)) * w;
+        const y = h - pad - ((data[i] - mn) / range) * (h - pad * 2);
+        if (i === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+}
+
+// ── Flag classification ──────────────────────────────────────
+function classifyCard(cardId, value, min, max) {
+    const el = document.getElementById(cardId);
+    if (!el || value === null || value === undefined) return;
+    el.classList.remove('flag-high', 'flag-low', 'flag-ok');
+    if (value < min) el.classList.add('flag-low');
+    else if (value > max) el.classList.add('flag-high');
+    else el.classList.add('flag-ok');
+}
+
+// ── Relay toggle ─────────────────────────────────────────────
+async function toggleRelay(id) {
+    const newAction = currentRelayState[id] ? 'off' : 'on';
+    try {
+        const resp = await fetch(`/api/grow/relay/${id}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: newAction, source: 'dashboard' }),
+        });
+        if (resp.ok) {
+            currentRelayState[id] = !currentRelayState[id];
+            updateRelayUI(id, currentRelayState[id]);
+        }
+    } catch (err) {
+        console.error('Relay toggle failed:', err);
+    }
+}
+
+function updateRelayUI(id, isOn) {
+    const status = document.getElementById(`relayStatus${id}`);
+    const btn = document.getElementById(`relayBtn${id}`);
+    if (status) {
+        status.textContent = isOn ? 'ON' : 'OFF';
+        status.className = 'relay-status ' + (isOn ? 'on' : 'off');
+    }
+    if (btn) {
+        btn.textContent = isOn ? 'Turn OFF' : 'Turn ON';
+        btn.className = 'toggle-btn' + (isOn ? ' on' : '');
+    }
+}
+
+// ── Poll dashboard data ──────────────────────────────────────
+async function pollDashboard() {
+    try {
+        const resp = await fetch(`/api/grow/dashboard?stats_minutes=${HISTORY_MINUTES}`);
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const data = await resp.json();
+
+        // Status
+        const dot = document.getElementById('statusDot');
+        const statusText = document.getElementById('statusText');
+        if (data.latest) {
+            const age = (Date.now() - new Date(data.latest.recorded_at).getTime()) / 1000;
+            if (age < 60) {
+                dot.className = 'status-dot live';
+                statusText.textContent = 'live';
+            } else {
+                dot.className = 'status-dot offline';
+                statusText.textContent = `${Math.floor(age / 60)}m ago`;
+            }
+        } else {
+            dot.className = 'status-dot offline';
+            statusText.textContent = 'no data';
+        }
+
+        // Grow info
+        if (data.grow) {
+            document.getElementById('growInfo').textContent =
+                `${data.grow.strain} · ${data.grow.current_stage} · Day ${data.day_number || '?'}`;
+        }
+
+        // Thresholds
+        thresholds = data.thresholds || {};
+
+        // Latest readings
+        const r = data.latest || {};
+        const setVal = (id, val, decimals = 1) => {
+            document.getElementById(id).textContent =
+                val !== null && val !== undefined ? Number(val).toFixed(decimals) : '—';
+        };
+
+        setVal('valTemp', r.temp_c);
+        setVal('valHum', r.humidity_pct);
+        setVal('valVpd', r.vpd_kpa, 2);
+        setVal('valPpfd', r.ppfd);
+        setVal('valSoil1', r.soil_moisture_1, 0);
+        setVal('valSoil2', r.soil_moisture_2, 0);
+
+        // Classify cards
+        if (thresholds) {
+            classifyCard('cardTemp', r.temp_c, thresholds.temp_min_c, thresholds.temp_max_c);
+            classifyCard('cardHum', r.humidity_pct, thresholds.humidity_min_pct, thresholds.humidity_max_pct);
+            classifyCard('cardVpd', r.vpd_kpa, thresholds.vpd_min_kpa, thresholds.vpd_max_kpa);
+            classifyCard('cardPpfd', r.ppfd, thresholds.ppfd_min, thresholds.ppfd_max);
+            classifyCard('cardSoil1', r.soil_moisture_1, thresholds.soil_moisture_min, thresholds.soil_moisture_max);
+            classifyCard('cardSoil2', r.soil_moisture_2, thresholds.soil_moisture_min, thresholds.soil_moisture_max);
+        }
+
+        // Range labels from stats
+        const s = data.stats || {};
+        const fmtRange = (min, max, unit) => {
+            if (min !== null && min !== undefined && max !== null && max !== undefined)
+                return `${Number(min).toFixed(1)} – ${Number(max).toFixed(1)}${unit} (1h)`;
+            return '';
+        };
+        document.getElementById('rangeTemp').textContent = fmtRange(s.temp_min, s.temp_max, '°C');
+        document.getElementById('rangeHum').textContent = fmtRange(s.hum_min, s.hum_max, '%');
+        document.getElementById('rangeVpd').textContent = fmtRange(s.vpd_min, s.vpd_max, ' kPa');
+        document.getElementById('rangePpfd').textContent = fmtRange(s.ppfd_min, s.ppfd_max, ' µmol');
+
+        // Sparklines — push new values
+        if (r.temp_c !== null && r.temp_c !== undefined) {
+            sparkData.temp.push(Number(r.temp_c));
+            if (sparkData.temp.length > MAX_SPARK) sparkData.temp.shift();
+            drawSparkline('sparkTemp', sparkData.temp, '#E05555');
+        }
+        if (r.humidity_pct !== null && r.humidity_pct !== undefined) {
+            sparkData.hum.push(Number(r.humidity_pct));
+            if (sparkData.hum.length > MAX_SPARK) sparkData.hum.shift();
+            drawSparkline('sparkHum', sparkData.hum, '#5B9BD5');
+        }
+        if (r.vpd_kpa !== null && r.vpd_kpa !== undefined) {
+            sparkData.vpd.push(Number(r.vpd_kpa));
+            if (sparkData.vpd.length > MAX_SPARK) sparkData.vpd.shift();
+            drawSparkline('sparkVpd', sparkData.vpd, '#D4A843');
+        }
+        if (r.ppfd !== null && r.ppfd !== undefined) {
+            sparkData.ppfd.push(Number(r.ppfd));
+            if (sparkData.ppfd.length > MAX_SPARK) sparkData.ppfd.shift();
+            drawSparkline('sparkPpfd', sparkData.ppfd, '#6BBF59');
+        }
+
+        // Relay states
+        currentRelayState[1] = !!r.relay_1_on;
+        currentRelayState[2] = !!r.relay_2_on;
+        updateRelayUI(1, currentRelayState[1]);
+        updateRelayUI(2, currentRelayState[2]);
+
+        // Flags banner
+        const banner = document.getElementById('flagsBanner');
+        const flagsArr = data.flags || [];
+        if (flagsArr.length > 0) {
+            document.getElementById('flagsText').textContent = flagsArr.join(', ');
+            banner.classList.add('visible');
+        } else {
+            banner.classList.remove('visible');
+        }
+
+        // Relay events
+        const evList = document.getElementById('relayEvents');
+        const relayNames = { 1: 'Humidifier', 2: 'SSR2' };
+        if (data.relay_events && data.relay_events.length > 0) {
+            evList.innerHTML = data.relay_events.map(ev => {
+                const t = new Date(ev.recorded_at);
+                const time = t.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                const name = relayNames[ev.relay_id] || `Relay ${ev.relay_id}`;
+                return `<li>
+                    <span class="event-time">${time}</span>
+                    <span class="event-action">${name} → ${ev.action.toUpperCase()} (${ev.source})</span>
+                </li>`;
+            }).join('');
+        }
+
+        // Last updated
+        document.getElementById('lastUpdated').textContent = new Date().toLocaleTimeString();
+
+    } catch (err) {
+        console.error('Dashboard poll failed:', err);
+        document.getElementById('statusDot').className = 'status-dot offline';
+        document.getElementById('statusText').textContent = 'error';
+    }
+}
+
+// ── Boot ─────────────────────────────────────────────────────
+pollDashboard();
+setInterval(pollDashboard, POLL_INTERVAL);
+
+// Seed sparklines with history on first load
+(async function loadHistory() {
+    try {
+        const resp = await fetch(`/api/grow/readings/history?minutes=${HISTORY_MINUTES}&limit=60`);
+        if (!resp.ok) return;
+        const rows = await resp.json();
+        // Rows come newest-first; reverse for chronological sparklines
+        const chronological = rows.reverse();
+        for (const r of chronological) {
+            if (r.temp_c !== null) sparkData.temp.push(Number(r.temp_c));
+            if (r.humidity_pct !== null) sparkData.hum.push(Number(r.humidity_pct));
+            if (r.vpd_kpa !== null) sparkData.vpd.push(Number(r.vpd_kpa));
+            if (r.ppfd !== null) sparkData.ppfd.push(Number(r.ppfd));
+        }
+        // Trim to max
+        for (const key of ['temp', 'hum', 'vpd', 'ppfd']) {
+            while (sparkData[key].length > MAX_SPARK) sparkData[key].shift();
+        }
+        drawSparkline('sparkTemp', sparkData.temp, '#E05555');
+        drawSparkline('sparkHum', sparkData.hum, '#5B9BD5');
+        drawSparkline('sparkVpd', sparkData.vpd, '#D4A843');
+        drawSparkline('sparkPpfd', sparkData.ppfd, '#6BBF59');
+    } catch (e) { console.warn('History load failed:', e); }
+})();
+</script>
+
+</body>
+</html>

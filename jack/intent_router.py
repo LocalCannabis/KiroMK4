@@ -549,6 +549,133 @@ JACK_TOOL_SCHEMAS: List[Dict[str, Any]] = [
             },
         },
     },
+    # ── ESP32 Sensor Tools ────────────────────────────────────────────────
+    {
+        "type": "function",
+        "function": {
+            "name": "jack_get_sensor_readings",
+            "description": (
+                "Get the latest real-time sensor readings from the ESP32 in the grow tent. "
+                "Returns temperature, humidity, PPFD, soil moisture (2 probes), VPD, "
+                "and relay states (humidifier, SSR2). Call this when Tim asks about "
+                "current tent conditions or when you need live data for analysis."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "grow_id": _GROW_PARAMS["grow_id"],
+                    "grow_type": _GROW_PARAMS["grow_type"],
+                },
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "jack_get_sensor_history",
+            "description": (
+                "Get historical sensor data from the ESP32 over a time window. "
+                "Returns min/max/avg stats and reading count. Use this for trend analysis, "
+                "diagnosing overnight swings, or answering questions about conditions "
+                "over the last N minutes/hours."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "minutes": {
+                        "type": "integer",
+                        "description": "Time window in minutes (default 60, max 1440 = 24h)",
+                        "default": 60,
+                    },
+                    "grow_id": _GROW_PARAMS["grow_id"],
+                    "grow_type": _GROW_PARAMS["grow_type"],
+                },
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "jack_set_relay",
+            "description": (
+                "Send a command to toggle a relay on the ESP32. "
+                "Relay 1 = humidifier, Relay 2 = reserved (future AC). "
+                "Use this when Tim asks to turn something on/off in the tent, "
+                "or when sensor data indicates an intervention is needed."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "relay_id": {
+                        "type": "integer",
+                        "description": "Which relay: 1 (humidifier) or 2 (reserved/AC)",
+                        "enum": [1, 2],
+                    },
+                    "action": {
+                        "type": "string",
+                        "description": "'on' or 'off'",
+                        "enum": ["on", "off"],
+                    },
+                    "reason": {
+                        "type": "string",
+                        "description": "Why the relay is being toggled (logged for audit)",
+                    },
+                },
+                "required": ["relay_id", "action"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "jack_update_thresholds",
+            "description": (
+                "Update the alert thresholds for a grow. These control when Jack flags "
+                "out-of-range conditions and when the humidifier auto-triggers. "
+                "Only provide fields you want to change."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "temp_min_c": {"type": "number", "description": "Min acceptable temp (°C)"},
+                    "temp_max_c": {"type": "number", "description": "Max acceptable temp (°C)"},
+                    "humidity_min_pct": {"type": "number", "description": "Min acceptable humidity (%)"},
+                    "humidity_max_pct": {"type": "number", "description": "Max acceptable humidity (%)"},
+                    "vpd_min_kpa": {"type": "number", "description": "Min acceptable VPD (kPa)"},
+                    "vpd_max_kpa": {"type": "number", "description": "Max acceptable VPD (kPa)"},
+                    "ppfd_min": {"type": "number", "description": "Min acceptable PPFD (µmol/m²/s)"},
+                    "ppfd_max": {"type": "number", "description": "Max acceptable PPFD (µmol/m²/s)"},
+                    "soil_moisture_min": {"type": "integer", "description": "Min acceptable soil moisture (%)"},
+                    "soil_moisture_max": {"type": "integer", "description": "Max acceptable soil moisture (%)"},
+                    "humidifier_on_below": {"type": "number", "description": "Humidity % below which humidifier turns on"},
+                    "grow_id": _GROW_PARAMS["grow_id"],
+                    "grow_type": _GROW_PARAMS["grow_type"],
+                },
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "jack_get_sensor_analysis",
+            "description": (
+                "Get a comprehensive sensor analysis: latest readings, 1h and 24h stats, "
+                "current thresholds, active flags, and relay event history. Use this for "
+                "a full tent health assessment or when Tim asks 'how's the tent doing?'"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "grow_id": _GROW_PARAMS["grow_id"],
+                    "grow_type": _GROW_PARAMS["grow_type"],
+                },
+                "required": [],
+            },
+        },
+    },
 ]
 
 
@@ -585,6 +712,16 @@ def execute_jack_tool(name: str, args: Dict[str, Any]) -> str:
             return _tool_setup_tent(args)
         elif name == "jack_list_grows":
             return _tool_list_grows(args)
+        elif name == "jack_get_sensor_readings":
+            return _tool_get_sensor_readings(args)
+        elif name == "jack_get_sensor_history":
+            return _tool_get_sensor_history(args)
+        elif name == "jack_set_relay":
+            return _tool_set_relay(args)
+        elif name == "jack_update_thresholds":
+            return _tool_update_thresholds(args)
+        elif name == "jack_get_sensor_analysis":
+            return _tool_get_sensor_analysis(args)
         else:
             return f"Unknown Jack tool: {name}"
     except Exception as exc:
@@ -945,6 +1082,240 @@ def _tool_list_grows(args: Dict[str, Any]) -> str:
             f"  [{label}] id={g['id']} | {g['strain']} | {grow_type} | {g['current_stage']} day {days} "
             f"| {fertility} | medium: {g.get('medium', 'unspecified')}"
         )
+
+    return "\n".join(lines)
+
+
+# =============================================================================
+# ESP32 Sensor Tool Implementations
+# =============================================================================
+
+def _tool_get_sensor_readings(args: Dict[str, Any]) -> str:
+    """Get latest real-time sensor readings from ESP32."""
+    grow, err = _resolve_grow_or_err(args)
+    if err:
+        return err
+
+    db = _get_db()
+    reading = db.get_latest_sensor_reading(grow["id"])
+    if not reading:
+        return "No sensor readings yet. The ESP32 may not be connected or sending data."
+
+    # Check age of reading
+    recorded = reading.get("recorded_at")
+    age_str = ""
+    if recorded:
+        from datetime import datetime as _dt
+        if hasattr(recorded, "timestamp"):
+            age_sec = (_dt.now(recorded.tzinfo) if recorded.tzinfo else _dt.now()) - recorded
+            age_minutes = int(age_sec.total_seconds() / 60)
+            if age_minutes > 5:
+                age_str = f" ⚠ Last reading is {age_minutes} minutes old — ESP32 may be offline."
+
+    parts = [f"Live sensor data for {grow['strain']} ({grow.get('grow_type', 'indoor')}):"]
+    if reading.get("temp_c") is not None:
+        parts.append(f"  Temperature: {reading['temp_c']}°C")
+    if reading.get("humidity_pct") is not None:
+        parts.append(f"  Humidity: {reading['humidity_pct']}%")
+    if reading.get("vpd_kpa") is not None:
+        parts.append(f"  VPD: {reading['vpd_kpa']} kPa")
+    if reading.get("ppfd") is not None:
+        parts.append(f"  PPFD: {reading['ppfd']} µmol/m²/s")
+    if reading.get("soil_moisture_1") is not None:
+        parts.append(f"  Soil moisture 1: {reading['soil_moisture_1']}%")
+    if reading.get("soil_moisture_2") is not None:
+        parts.append(f"  Soil moisture 2: {reading['soil_moisture_2']}%")
+    parts.append(f"  Humidifier (SSR1): {'ON' if reading.get('relay_1_on') else 'OFF'}")
+    parts.append(f"  SSR2 (reserved): {'ON' if reading.get('relay_2_on') else 'OFF'}")
+    if age_str:
+        parts.append(age_str)
+
+    return "\n".join(parts)
+
+
+def _tool_get_sensor_history(args: Dict[str, Any]) -> str:
+    """Get sensor stats over a time window."""
+    grow, err = _resolve_grow_or_err(args)
+    if err:
+        return err
+
+    db = _get_db()
+    minutes = min(int(args.get("minutes", 60)), 1440)
+    stats = db.get_sensor_stats(grow["id"], minutes=minutes)
+
+    if not stats or not stats.get("reading_count"):
+        return f"No sensor readings in the last {minutes} minutes."
+
+    count = int(stats["reading_count"])
+    parts = [f"Sensor stats for {grow['strain']} — last {minutes} min ({count} readings):"]
+
+    def _fmt(label, mn, mx, avg, unit=""):
+        if mn is not None and mx is not None and avg is not None:
+            return f"  {label}: {float(mn):.1f}–{float(mx):.1f}{unit} (avg {float(avg):.1f}{unit})"
+        return None
+
+    line = _fmt("Temperature", stats.get("temp_min"), stats.get("temp_max"), stats.get("temp_avg"), "°C")
+    if line: parts.append(line)
+    line = _fmt("Humidity", stats.get("hum_min"), stats.get("hum_max"), stats.get("hum_avg"), "%")
+    if line: parts.append(line)
+    line = _fmt("VPD", stats.get("vpd_min"), stats.get("vpd_max"), stats.get("vpd_avg"), " kPa")
+    if line: parts.append(line)
+    line = _fmt("PPFD", stats.get("ppfd_min"), stats.get("ppfd_max"), stats.get("ppfd_avg"), " µmol/m²/s")
+    if line: parts.append(line)
+
+    if stats.get("soil1_avg") is not None:
+        parts.append(f"  Soil 1 avg: {float(stats['soil1_avg']):.0f}%")
+    if stats.get("soil2_avg") is not None:
+        parts.append(f"  Soil 2 avg: {float(stats['soil2_avg']):.0f}%")
+
+    return "\n".join(parts)
+
+
+def _tool_set_relay(args: Dict[str, Any]) -> str:
+    """Send a relay control command to the ESP32."""
+    relay_id = int(args["relay_id"])
+    action = args["action"].lower()
+    reason = args.get("reason", "Jack tool call")
+
+    if relay_id not in (1, 2):
+        return "Invalid relay_id. Must be 1 (humidifier) or 2 (reserved/AC)."
+    if action not in ("on", "off"):
+        return "Invalid action. Must be 'on' or 'off'."
+
+    # Queue command via the grow API
+    from .grow_api import _relay_command_queue
+    cmd = f"{'ON' if action == 'on' else 'OFF'}{relay_id}"
+    _relay_command_queue.append(cmd)
+
+    # Log relay event
+    db = _get_db()
+    grow, _ = _resolve_grow_or_err(args)
+    grow_id = grow["id"] if grow else None
+    db.insert_relay_event(grow_id, relay_id, action, source="jack", reason=reason)
+
+    relay_names = {1: "Humidifier", 2: "Reserved (AC)"}
+    return (
+        f"Command queued: {relay_names.get(relay_id, f'Relay {relay_id}')} → {action.upper()}. "
+        f"Will take effect on next ESP32 check-in (~2 seconds). "
+        f"Note: SSR1 automatic humidity control may override manual commands."
+    )
+
+
+def _tool_update_thresholds(args: Dict[str, Any]) -> str:
+    """Update alert thresholds for a grow."""
+    grow, err = _resolve_grow_or_err(args)
+    if err:
+        return err
+
+    db = _get_db()
+    threshold_fields = {
+        k: v for k, v in args.items()
+        if k not in ("grow_id", "grow_type") and v is not None
+    }
+    if not threshold_fields:
+        return "No threshold fields provided to update."
+
+    result = db.upsert_thresholds(grow["id"], **threshold_fields)
+
+    parts = ["Thresholds updated:"]
+    for k, v in threshold_fields.items():
+        label = k.replace("_", " ").title()
+        parts.append(f"  {label}: {v}")
+
+    return "\n".join(parts)
+
+
+def _tool_get_sensor_analysis(args: Dict[str, Any]) -> str:
+    """Comprehensive sensor analysis — latest + stats + thresholds + flags."""
+    grow, err = _resolve_grow_or_err(args)
+    if err:
+        return err
+
+    db = _get_db()
+    cfg = _get_cfg()
+    grow_id = grow["id"]
+
+    latest = db.get_latest_sensor_reading(grow_id)
+    if not latest:
+        return "No sensor data available. The ESP32 may not be connected."
+
+    stats_1h = db.get_sensor_stats(grow_id, minutes=60)
+    stats_24h = db.get_sensor_stats(grow_id, minutes=1440)
+    thresholds = db.get_thresholds(grow_id)
+    relay_events = db.get_relay_events(grow_id, limit=5)
+
+    # Start date / day number
+    from datetime import date as _date
+    start = grow.get("start_date")
+    if isinstance(start, str):
+        start = _date.fromisoformat(start)
+    day_number = (_date.today() - start).days + 1 if start else "?"
+
+    lines = [
+        f"=== Sensor Analysis: {grow['strain']} (day {day_number}, {grow['current_stage']}) ===",
+        "",
+        "── Current Readings ──",
+    ]
+
+    if latest.get("temp_c") is not None:
+        lines.append(f"  Temp: {latest['temp_c']}°C")
+    if latest.get("humidity_pct") is not None:
+        lines.append(f"  Humidity: {latest['humidity_pct']}%")
+    if latest.get("vpd_kpa") is not None:
+        lines.append(f"  VPD: {latest['vpd_kpa']} kPa")
+    if latest.get("ppfd") is not None:
+        lines.append(f"  PPFD: {latest['ppfd']} µmol/m²/s")
+    if latest.get("soil_moisture_1") is not None:
+        lines.append(f"  Soil 1: {latest['soil_moisture_1']}% | Soil 2: {latest.get('soil_moisture_2', '?')}%")
+    lines.append(f"  Humidifier: {'ON' if latest.get('relay_1_on') else 'OFF'}")
+
+    # 1h stats
+    if stats_1h and stats_1h.get("reading_count"):
+        count = int(stats_1h["reading_count"])
+        lines.extend(["", f"── Last Hour ({count} readings) ──"])
+        if stats_1h.get("temp_avg") is not None:
+            lines.append(f"  Temp: {float(stats_1h['temp_min']):.1f}–{float(stats_1h['temp_max']):.1f}°C (avg {float(stats_1h['temp_avg']):.1f})")
+        if stats_1h.get("hum_avg") is not None:
+            lines.append(f"  Humidity: {float(stats_1h['hum_min']):.1f}–{float(stats_1h['hum_max']):.1f}% (avg {float(stats_1h['hum_avg']):.1f})")
+        if stats_1h.get("vpd_avg") is not None:
+            lines.append(f"  VPD: {float(stats_1h['vpd_min']):.2f}–{float(stats_1h['vpd_max']):.2f} kPa (avg {float(stats_1h['vpd_avg']):.2f})")
+
+    # Flags
+    flags = []
+    if thresholds and latest:
+        def _chk(val_key, t_min_key, t_max_key, flag_name):
+            v = latest.get(val_key)
+            if v is not None and thresholds.get(t_min_key) is not None:
+                if float(v) < float(thresholds[t_min_key]):
+                    flags.append(f"{flag_name}_low")
+                elif float(v) > float(thresholds[t_max_key]):
+                    flags.append(f"{flag_name}_high")
+
+        _chk("temp_c", "temp_min_c", "temp_max_c", "temp")
+        _chk("humidity_pct", "humidity_min_pct", "humidity_max_pct", "humidity")
+        _chk("vpd_kpa", "vpd_min_kpa", "vpd_max_kpa", "vpd")
+        _chk("ppfd", "ppfd_min", "ppfd_max", "ppfd")
+        s1 = latest.get("soil_moisture_1")
+        if s1 is not None:
+            if int(s1) < int(thresholds.get("soil_moisture_min", 40)):
+                flags.append("soil1_dry")
+            elif int(s1) > int(thresholds.get("soil_moisture_max", 70)):
+                flags.append("soil1_wet")
+
+    if flags:
+        lines.extend(["", f"⚠ Active flags: {', '.join(flags)}"])
+    else:
+        lines.extend(["", "✓ All readings within thresholds."])
+
+    # Recent relay events
+    if relay_events:
+        lines.extend(["", "── Recent Relay Activity ──"])
+        relay_names = {1: "Humidifier", 2: "SSR2"}
+        for ev in relay_events[:5]:
+            ts = ev["recorded_at"]
+            if hasattr(ts, "strftime"):
+                ts = ts.strftime("%H:%M")
+            lines.append(f"  {ts} | {relay_names.get(ev['relay_id'], '?')} → {ev['action'].upper()} ({ev['source']})")
 
     return "\n".join(lines)
 

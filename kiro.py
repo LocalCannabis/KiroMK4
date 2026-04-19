@@ -595,7 +595,12 @@ class LLMClient:
             kwargs["tools"] = tools
             kwargs["tool_choice"] = "auto"
 
-        stream = self.client.chat.completions.create(**kwargs)
+        try:
+            stream = self.client.chat.completions.create(**kwargs)
+        except Exception as _conn_err:
+            self.logger.error("LLM connection failed: %s", _conn_err)
+            yield "Sorry, I can't reach my language model right now. Check the network and try again."
+            return
 
         # Accumulate tool call deltas (index → {id, name, arguments})
         tool_calls_acc: Dict[int, Dict[str, str]] = {}
@@ -671,13 +676,18 @@ class LLMClient:
                 })
 
             # Second streaming call for natural spoken response
-            stream2 = self.client.chat.completions.create(
-                model=self.model,
-                temperature=self.temperature,
-                max_tokens=self.max_tokens,
-                stream=True,
-                messages=messages,
-            )
+            try:
+                stream2 = self.client.chat.completions.create(
+                    model=self.model,
+                    temperature=self.temperature,
+                    max_tokens=self.max_tokens,
+                    stream=True,
+                    messages=messages,
+                )
+            except Exception as _conn_err2:
+                self.logger.error("LLM tool-response call failed: %s", _conn_err2)
+                yield "I ran the tool but couldn't reach the model to summarise the result."
+                return
             buf2 = ""
             for chunk in stream2:
                 content = chunk.choices[0].delta.content or ""
@@ -937,7 +947,12 @@ class KiroOrchestrator:
     def run_forever(self) -> None:
         self.logger.info("Kiro voice loop started. Session: %s", self._session_id)
         while True:
-            result = self.loop_once(speak=True)
+            try:
+                result = self.loop_once(speak=True)
+            except Exception as _loop_exc:
+                self.logger.error("Unhandled error in loop_once — continuing: %s", _loop_exc, exc_info=True)
+                time.sleep(1)   # brief pause before next listen cycle
+                continue
             if result["user"].lower() in {"stop kiro", "exit", "quit"}:
                 self.logger.info("Shutdown phrase detected.")
                 break

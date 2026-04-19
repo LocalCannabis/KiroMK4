@@ -31,3 +31,10 @@ __pycache__/
 data/chroma/
 data/voices/*.onnx
 .claude/
+# Obsidian vault — ignore UI state and scratch canvases
+vault/.obsidian/workspace.json
+vault/.obsidian/workspace-mobile.json
+vault/.obsidian/graph.json
+vault/.obsidian/app.json
+vault/scratch/
+!vault/scratch/.gitkeep

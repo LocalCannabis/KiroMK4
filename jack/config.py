@@ -132,6 +132,14 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         },
     },
 
+    # ── Sensor data retention / rollup ───────────────────────────────────
+    "sensor_retention": {
+        "raw_retain_days": 7,
+        "rollup_interval_minutes": 60,
+        "hourly_lookback_hours": 2,
+        "daily_lookback_days": 2,
+    },
+
     # ── Confidence framework ──────────────────────────────────────────────
     "confidence": {
         "high_min_sources": 2,

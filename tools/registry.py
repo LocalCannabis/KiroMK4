@@ -679,6 +679,9 @@ _PERSONA_TOOLS: Dict[str, List[str]] = {
         "jack_update_grow_stage", "jack_log_watering", "jack_get_feeding_schedule",
         "jack_compute_vpd", "jack_compute_dli",
         "jack_create_grow", "jack_setup_tent", "jack_list_grows",
+        # ESP32 sensor tools
+        "jack_get_sensor_readings", "jack_get_sensor_history",
+        "jack_set_relay", "jack_update_thresholds", "jack_get_sensor_analysis",
     ],
 }
 

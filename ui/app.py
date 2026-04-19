@@ -543,6 +543,14 @@ with app.app_context():
 from auth import init_auth
 init_auth(app)
 
+# Register Jack grow sensor API blueprint
+try:
+    from jack.grow_api import grow_bp
+    app.register_blueprint(grow_bp, url_prefix="/api/grow")
+    log.info("Jack grow sensor API registered at /api/grow")
+except ImportError as e:
+    log.warning("Jack grow API not available: %s", e)
+
 # Start Finley background sync so the UI always has fresh YNAB data.
 # Runs immediately on boot, then every 30 minutes.
 # Guard: when Werkzeug reloader is active it forks a watcher process
@@ -561,6 +569,20 @@ if _finley_available and not _in_reloader_watcher:
         log.info("Finley sync daemon started (30-min interval, run_on_start=True)")
     except Exception as _exc:
         log.warning("Failed to start Finley sync daemon: %s", _exc)
+
+# Start Jack grow-tent monitor daemon (checks sensors every 30s).
+_grow_monitor_daemon = None
+if not _in_reloader_watcher:
+    try:
+        from jack.grow_monitor import GrowMonitorDaemon
+        _grow_monitor_daemon = GrowMonitorDaemon(
+            check_interval_s=30,
+            auto_relay=True,
+        )
+        _grow_monitor_daemon.start()
+        log.info("Jack grow monitor daemon started (30s interval, auto_relay=True)")
+    except Exception as _exc:
+        log.warning("Failed to start grow monitor daemon: %s", _exc)
 
 
 # ---------------------------------------------------------------------------
@@ -583,6 +605,12 @@ def hud():
         personas=PERSONAS,
         persona_order=PERSONA_ORDER,
     )
+
+
+@app.route("/grow")
+def grow_dashboard():
+    """Real-time grow tent monitoring dashboard."""
+    return render_template("grow.html")
 
 
 # ---------------------------------------------------------------------------
@@ -1448,4 +1476,4 @@ def api_catchup():
 if __name__ == "__main__":
     # use_reloader=False prevents Werkzeug from forking a second process
     # that would start a duplicate Finley sync daemon.
-    app.run(host="127.0.0.1", port=FLASK_PORT, debug=False, use_reloader=False)
+    app.run(host="0.0.0.0", port=FLASK_PORT, debug=False, use_reloader=False)
