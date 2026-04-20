@@ -554,6 +554,13 @@ app = Flask(__name__)
 if _jack_api_available and jack_bp is not None:
     app.register_blueprint(jack_bp, url_prefix="/jack")
 
+try:
+    from jack.grow_api import grow_bp
+    app.register_blueprint(grow_bp, url_prefix="/api/grow")
+    logging.getLogger("kiro-server").info("Grow API registered at /api/grow")
+except Exception as _e:
+    logging.getLogger("kiro-server").warning("Grow API unavailable: %s", _e)
+
 # Globals initialized at startup
 config: Dict[str, Any] = {}
 stt: Optional[ServerSTT] = None

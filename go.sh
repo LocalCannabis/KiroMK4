@@ -1,4 +1,9 @@
 #!/usr/bin/env bash
+# DEPRECATED — use: ./kiro start
+# This script is kept for reference only. kiro_command.py is the unified entrypoint.
+echo "⚠️  go.sh is deprecated. Use: ./kiro start"
+echo "Redirecting..."
+exec "$(dirname "$0")/kiro" start "$@"
 # go.sh — full-stack launcher for Kiro voice assistant
 #   ./go.sh               — voice pipeline (default)
 #   ./go.sh --text-input  — text CLI (no mic/TTS required)

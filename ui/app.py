@@ -1017,21 +1017,60 @@ def api_chat():
 
 
 # ---------------------------------------------------------------------------
-# API — Voice proxy (thin client to kiro_server /process)
+# API — Voice (in-process pipeline preferred, proxy fallback)
 # ---------------------------------------------------------------------------
 KIRO_SERVER_URL = os.environ.get("KIRO_SERVER_URL", "http://127.0.0.1:5400")
+
+
+def _voice_via_pipeline(wav_data: bytes, session_id: str, persona_key: str) -> dict:
+    """Process voice through the in-process VoicePipeline (no network hop)."""
+    pipeline = app.config.get("voice_pipeline")
+    if pipeline is None:
+        return None  # signal caller to fall back to proxy
+    result = pipeline.process(wav_data, session_id=session_id, persona=persona_key)
+    audio_b64 = base64.b64encode(result["audio"]).decode("ascii") if result.get("audio") else ""
+    return {
+        "transcript": result.get("transcript", ""),
+        "response_text": result.get("response_text", ""),
+        "persona": result.get("persona", persona_key),
+        "audio_b64": audio_b64,
+        "timing": result.get("timing", {}),
+        "session_id": result.get("session_id", session_id),
+    }
+
+
+def _voice_via_proxy(wav_data: bytes, session_id: str, persona_key: str) -> dict:
+    """Proxy voice to a remote kiro_server instance (legacy / --no-voice mode)."""
+    req = urllib.request.Request(
+        f"{KIRO_SERVER_URL}/process",
+        data=wav_data,
+        headers={
+            "Content-Type": "audio/wav",
+            "X-Session-Id": session_id,
+            "X-Persona": persona_key,
+        },
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        resp_data = resp.read()
+        return {
+            "transcript": resp.headers.get("X-Transcript", ""),
+            "response_text": resp.headers.get("X-Response-Text", ""),
+            "persona": resp.headers.get("X-Persona", persona_key),
+            "audio_b64": base64.b64encode(resp_data).decode("ascii"),
+            "timing": json.loads(resp.headers.get("X-Timing", "{}")),
+            "session_id": resp.headers.get("X-Session-Id", session_id),
+        }
 
 
 @app.route("/api/voice", methods=["POST"])
 def api_voice():
     """
-    Proxy voice audio to kiro_server /process endpoint.
+    Voice pipeline endpoint.
 
-    Input:  WAV body from browser mic capture
-    Output: JSON with transcript, response_text, and base64-encoded WAV audio
-
-    This keeps the overlay as a thin client — all STT, LLM, and TTS
-    processing happens on kiro_server, same pipeline the Pi uses.
+    Tries the in-process VoicePipeline first (zero-latency, loaded via
+    kiro_command.py --with-voice).  Falls back to proxying to a standalone
+    kiro_server if the pipeline isn't loaded.
     """
     wav_data = request.get_data()
     if not wav_data:
@@ -1040,29 +1079,12 @@ def api_voice():
     session_id = request.headers.get("X-Session-Id", "")
     persona_key = request.headers.get("X-Persona", "kiro")
 
-    # Forward to kiro_server /process
     try:
-        req = urllib.request.Request(
-            f"{KIRO_SERVER_URL}/process",
-            data=wav_data,
-            headers={
-                "Content-Type": "audio/wav",
-                "X-Session-Id": session_id,
-                "X-Persona": persona_key,
-            },
-            method="POST",
-        )
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            resp_data = resp.read()
-            transcript = resp.headers.get("X-Transcript", "")
-            response_text = resp.headers.get("X-Response-Text", "")
-            resp_persona = resp.headers.get("X-Persona", persona_key)
-            timing = resp.headers.get("X-Timing", "{}")
-            resp_session_id = resp.headers.get("X-Session-Id", session_id)
-
-            # Encode WAV response as base64 for JSON transport
-            audio_b64 = base64.b64encode(resp_data).decode("ascii")
-
+        # ---- Try in-process first ----
+        result = _voice_via_pipeline(wav_data, session_id, persona_key)
+        if result is None:
+            # ---- Fall back to proxy ----
+            result = _voice_via_proxy(wav_data, session_id, persona_key)
     except urllib.error.HTTPError as e:
         body = e.read().decode("utf-8", errors="replace")
         log.error("kiro_server returned %d: %s", e.code, body)
@@ -1074,8 +1096,11 @@ def api_voice():
             "detail": f"kiro_server at {KIRO_SERVER_URL} is not running. Start it first.",
         }), 503
     except Exception as e:
-        log.error("Voice proxy error: %s", e, exc_info=True)
-        return jsonify({"error": f"Voice proxy error: {e}"}), 500
+        log.error("Voice processing error: %s", e, exc_info=True)
+        return jsonify({"error": f"Voice processing error: {e}"}), 500
+
+    transcript = result.get("transcript", "")
+    response_text = result.get("response_text", "")
 
     # Save messages to chat DB if we have a session_id
     if session_id:
@@ -1100,26 +1125,23 @@ def api_voice():
         except Exception as e:
             log.warning("Failed to save voice messages to DB: %s", e)
 
-    return jsonify({
-        "transcript": transcript,
-        "response_text": response_text,
-        "persona": resp_persona,
-        "audio_b64": audio_b64,
-        "timing": json.loads(timing) if timing else {},
-        "session_id": resp_session_id,
-    })
+    return jsonify(result)
 
 
 @app.route("/api/voice/health")
 def api_voice_health():
-    """Check if kiro_server is reachable."""
+    """Check voice pipeline status."""
+    pipeline = app.config.get("voice_pipeline")
+    if pipeline is not None:
+        return jsonify({"available": True, "mode": "in-process"})
+    # Fall back — check remote kiro_server
     try:
         req = urllib.request.Request(f"{KIRO_SERVER_URL}/health", method="GET")
         with urllib.request.urlopen(req, timeout=5) as resp:
             data = json.loads(resp.read())
-            return jsonify({"available": True, "server": data})
+            return jsonify({"available": True, "mode": "proxy", "server": data})
     except Exception:
-        return jsonify({"available": False, "server_url": KIRO_SERVER_URL})
+        return jsonify({"available": False, "mode": "none", "server_url": KIRO_SERVER_URL})
 
 
 # ---------------------------------------------------------------------------

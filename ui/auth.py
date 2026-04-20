@@ -36,6 +36,10 @@ def init_auth(app):
         if not request.path.startswith("/api/"):
             return None
 
+        # ESP32 sensor ingestion — LAN device, no token possible
+        if request.path.startswith("/api/grow/"):
+            return None
+
         # Local overlay / dev: always through
         if request.remote_addr in _LOCALHOST:
             return None

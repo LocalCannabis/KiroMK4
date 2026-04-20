@@ -1,4 +1,9 @@
 #!/usr/bin/env bash
+# DEPRECATED — use: ./kiro start
+# This script is kept for reference only. kiro_command.py is the unified entrypoint.
+echo "⚠️  start_ui.sh is deprecated. Use: ./kiro start"
+echo "Redirecting..."
+exec "$(dirname "$0")/kiro" start "$@"
 # start_ui.sh — Start the Kiro overlay UI
 #
 #   ./start_ui.sh                    # auto-detect DISPLAY, default zoom/position
