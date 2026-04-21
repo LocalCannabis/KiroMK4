@@ -698,6 +698,163 @@
         #catchup-banner .catchup-dismiss:hover {
             color: var(--text-secondary);
         }
+
+        /* ---------------------------------------------------------------
+           Model indicator chip (chat header)
+           --------------------------------------------------------------- */
+        #model-indicator {
+            margin-left: auto;
+            display: none;
+            align-items: center;
+            gap: 6px;
+            font-size: 11px;
+            font-family: var(--font-mono);
+            color: var(--text-secondary);
+            background: rgba(255,255,255,0.04);
+            border: 1px solid var(--border-subtle);
+            border-radius: 20px;
+            padding: 3px 10px;
+            white-space: nowrap;
+            transition: color 0.2s;
+        }
+        #model-indicator.visible { display: flex; }
+        #model-indicator .tier-dot {
+            width: 7px; height: 7px;
+            border-radius: 50%;
+            flex-shrink: 0;
+        }
+        .tier-dot.local-fast    { background: #4ade80; }
+        .tier-dot.local-capable { background: #86efac; }
+        .tier-dot.fast          { background: #60a5fa; }
+        .tier-dot.balanced      { background: #a78bfa; }
+        .tier-dot.deep          { background: #f97316; }
+
+        #settings-btn {
+            background: none;
+            border: none;
+            cursor: pointer;
+            color: var(--text-secondary);
+            font-size: 16px;
+            padding: 4px 6px;
+            border-radius: 6px;
+            transition: color 0.15s, background 0.15s;
+            flex-shrink: 0;
+            margin-left: 6px;
+        }
+        #settings-btn:hover {
+            color: var(--text-primary);
+            background: rgba(255,255,255,0.06);
+        }
+
+        /* ---------------------------------------------------------------
+           Settings modal
+           --------------------------------------------------------------- */
+        #settings-overlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.65);
+            z-index: 200;
+            align-items: flex-start;
+            justify-content: flex-end;
+        }
+        #settings-overlay.open { display: flex; }
+
+        #settings-panel {
+            background: var(--bg-secondary, #1a1a1a);
+            border-left: 1px solid var(--border-subtle);
+            width: min(500px, 100vw);
+            height: 100vh;
+            overflow-y: auto;
+            padding: 28px 24px;
+            display: flex;
+            flex-direction: column;
+            gap: 24px;
+            font-size: 13px;
+            color: var(--text-primary);
+        }
+
+        #settings-panel h2 {
+            font-family: var(--font-mono);
+            font-size: 13px;
+            font-weight: 700;
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+            color: var(--accent);
+            margin: 0 0 4px;
+        }
+
+        .settings-section { display: flex; flex-direction: column; gap: 12px; }
+        .settings-section-title {
+            font-family: var(--font-mono);
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            color: var(--text-secondary);
+            padding-bottom: 6px;
+            border-bottom: 1px solid var(--border-subtle);
+        }
+        .settings-row {
+            display: grid;
+            grid-template-columns: 130px 1fr 1fr;
+            align-items: center;
+            gap: 10px;
+        }
+        .settings-row label { font-size: 12px; color: var(--text-secondary); white-space: nowrap; }
+        .settings-row select {
+            background: rgba(255,255,255,0.06);
+            border: 1px solid var(--border-subtle);
+            border-radius: 6px;
+            color: var(--text-primary);
+            font-size: 12px;
+            padding: 5px 8px;
+            outline: none;
+            transition: border-color 0.15s;
+            -webkit-appearance: none;
+        }
+        .settings-row select:focus { border-color: var(--accent); }
+
+        .cost-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+        .cost-card {
+            background: rgba(255,255,255,0.04);
+            border: 1px solid var(--border-subtle);
+            border-radius: 8px;
+            padding: 12px;
+            text-align: center;
+        }
+        .cost-card .cost-period { font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-secondary); margin-bottom: 4px; }
+        .cost-card .cost-value  { font-family: var(--font-mono); font-size: 20px; font-weight: 700; color: var(--text-primary); }
+        .cost-card .cost-sub    { font-size: 10px; color: var(--text-secondary); margin-top: 2px; }
+
+        #settings-save-btn {
+            background: var(--accent); color: #000; border: none; border-radius: 8px;
+            padding: 10px 20px; font-size: 13px; font-weight: 700; cursor: pointer;
+            align-self: flex-start; transition: opacity 0.15s;
+        }
+        #settings-save-btn:hover { opacity: 0.85; }
+        #settings-save-btn:disabled { opacity: 0.4; cursor: default; }
+        #settings-status { font-size: 11px; color: var(--text-secondary); align-self: center; }
+        .settings-close-row { display: flex; justify-content: space-between; align-items: center; }
+        #settings-close-btn {
+            background: none; border: none; cursor: pointer;
+            color: var(--text-secondary); font-size: 20px; padding: 0 4px; line-height: 1;
+            transition: color 0.15s;
+        }
+        #settings-close-btn:hover { color: var(--text-primary); }
+
+        .router-status-row { display: flex; gap: 8px; flex-wrap: wrap; }
+        .status-chip {
+            display: flex; align-items: center; gap: 5px;
+            font-size: 11px; font-family: var(--font-mono);
+            background: rgba(255,255,255,0.05);
+            border: 1px solid var(--border-subtle);
+            border-radius: 12px; padding: 3px 9px;
+        }
+        .status-chip .dot { width: 6px; height: 6px; border-radius: 50%; }
+        .dot-ok  { background: #4ade80; }
+        .dot-warn{ background: #fbbf24; }
+        .dot-err { background: #f87171; }
     </style>
 </head>
 
@@ -743,6 +900,11 @@
                     <h1 id="header-name"></h1>
                     <span class="persona-role" id="header-role"></span>
                 </div>
+                <span id="model-indicator" title="Active model / tier">
+                    <span class="tier-dot" id="model-tier-dot"></span>
+                    <span id="model-indicator-text">—</span>
+                </span>
+                <button id="settings-btn" title="Model &amp; cost settings">⚙</button>
             </div>
 
             <div id="messages-container">
@@ -764,6 +926,55 @@
                 </div>
             </div>
         </main>
+    </div>
+
+    <!-- Settings overlay -->
+    <div id="settings-overlay">
+      <div id="settings-panel">
+        <div class="settings-close-row">
+          <h2>Model &amp; Cost Settings</h2>
+          <button id="settings-close-btn" title="Close">×</button>
+        </div>
+        <div class="settings-section">
+          <div class="settings-section-title">Router Status</div>
+          <div class="router-status-row" id="router-status-chips">
+            <span class="status-chip"><span class="dot dot-warn"></span>loading…</span>
+          </div>
+        </div>
+        <div class="settings-section">
+          <div class="settings-section-title">Cost Dashboard</div>
+          <div class="cost-grid">
+            <div class="cost-card"><div class="cost-period">Today</div><div class="cost-value" id="cost-today">—</div><div class="cost-sub" id="cost-today-calls">— calls</div></div>
+            <div class="cost-card"><div class="cost-period">This Week</div><div class="cost-value" id="cost-week">—</div><div class="cost-sub" id="cost-week-calls">— calls</div></div>
+            <div class="cost-card"><div class="cost-period">This Month</div><div class="cost-value" id="cost-month">—</div><div class="cost-sub" id="cost-month-calls">— calls</div></div>
+          </div>
+        </div>
+        <div class="settings-section">
+          <div class="settings-section-title">Global Defaults</div>
+          <div class="settings-row">
+            <label>Routing Policy</label>
+            <select id="cfg-global-policy">
+              <option value="auto">Auto (local first)</option>
+              <option value="local-first">Local First</option>
+              <option value="cloud-first">Cloud First</option>
+              <option value="cloud-only">Cloud Only</option>
+            </select>
+            <select id="cfg-global-ceiling">
+              <option value="fast">Fast (haiku)</option>
+              <option value="balanced">Balanced (sonnet)</option>
+              <option value="deep">Deep (opus)</option>
+            </select>
+          </div>
+        </div>
+        <div class="settings-section">
+          <div class="settings-section-title">Per-Persona Overrides</div>
+          <div id="persona-config-rows"></div>
+        </div>
+        <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap;">
+          <button id="settings-save-btn">Save Changes</button>
+          <span id="settings-status"></span>
+        </div>
+      </div>
     </div>
 
     <script>
@@ -1060,13 +1271,16 @@
                             if (!line.startsWith('data: ')) continue;
                             try {
                                 const data = JSON.parse(line.slice(6));
+                                if (data.route_info) {
+                                    updateModelIndicator(data.route_info);
+                                }
                                 if (data.token) {
                                     fullText += data.token;
                                     contentSpan.innerHTML = formatContent(fullText);
                                     scrollToBottom();
                                 }
                                 if (data.done) {
-                                    // Streaming complete
+                                    if (data.usage) updateModelIndicator(data.usage);
                                 }
                             } catch (e) { }
                         }
@@ -1361,6 +1575,150 @@
 
         selectPersona('kiro');
         $messageInput.focus();
+
+
+        /* ================================================================
+           Model Indicator + Settings Panel
+           ================================================================ */
+
+        const $modelIndicator  = document.getElementById('model-indicator');
+        const $modelTierDot    = document.getElementById('model-tier-dot');
+        const $modelText       = document.getElementById('model-indicator-text');
+        const $settingsBtn     = document.getElementById('settings-btn');
+        const $settingsOverlay = document.getElementById('settings-overlay');
+        const $settingsClose   = document.getElementById('settings-close-btn');
+        const $settingsSave    = document.getElementById('settings-save-btn');
+        const $settingsStatus  = document.getElementById('settings-status');
+
+        const TIER_LABELS = {
+            'local-fast':    '⚡ local-fast',
+            'local-capable': '🖥 local',
+            'fast':          '☁ fast',
+            'balanced':      '☁ balanced',
+            'deep':          '☁ deep',
+        };
+
+        function updateModelIndicator(info) {
+            if (!info || !info.model) return;
+            const tier = info.tier || 'fast';
+            $modelTierDot.className = `tier-dot ${tier}`;
+            $modelText.textContent  = `${TIER_LABELS[tier] || tier} · ${info.model}`;
+            $modelIndicator.classList.add('visible');
+        }
+
+        $settingsBtn.addEventListener('click', () => {
+            $settingsOverlay.classList.add('open');
+            loadSettingsData();
+        });
+        $settingsClose.addEventListener('click', () => $settingsOverlay.classList.remove('open'));
+        $settingsOverlay.addEventListener('click', (e) => {
+            if (e.target === $settingsOverlay) $settingsOverlay.classList.remove('open');
+        });
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape' && $settingsOverlay.classList.contains('open')) {
+                $settingsOverlay.classList.remove('open');
+            }
+        });
+
+        async function loadSettingsData() {
+            $settingsStatus.textContent = 'Loading…';
+            try {
+                const [cfgRes, statusRes, usageRes] = await Promise.all([
+                    fetch('/api/models/config'),
+                    fetch('/api/models/status'),
+                    fetch('/api/models/usage'),
+                ]);
+                const cfg    = cfgRes.ok    ? await cfgRes.json()    : {};
+                const status = statusRes.ok ? await statusRes.json() : {};
+                const usage  = usageRes.ok  ? await usageRes.json()  : {};
+                renderRouterStatus(status);
+                renderCostDashboard(usage);
+                renderConfigRows(cfg);
+                $settingsStatus.textContent = '';
+            } catch (err) {
+                $settingsStatus.textContent = `Error: ${err.message}`;
+            }
+        }
+
+        function renderRouterStatus(status) {
+            const el = document.getElementById('router-status-chips');
+            const chips = [];
+            const ollamaOk = status.ollama_reachable;
+            chips.push(`<span class="status-chip"><span class="dot ${ollamaOk ? 'dot-ok' : 'dot-err'}"></span>Ollama ${ollamaOk ? 'online' : 'offline'}</span>`);
+            if (status.local_models) {
+                for (const [k, v] of Object.entries(status.local_models)) {
+                    chips.push(`<span class="status-chip"><span class="dot dot-ok"></span>${v}</span>`);
+                }
+            }
+            const tiers = status.available_tiers || [];
+            chips.push(`<span class="status-chip"><span class="dot dot-ok"></span>${tiers.length} tier${tiers.length !== 1 ? 's' : ''} available</span>`);
+            el.innerHTML = chips.join('');
+        }
+
+        function renderCostDashboard(usage) {
+            function fmt(n) { return '$' + (n || 0).toFixed(4); }
+            function set(id, val) { const el = document.getElementById(id); if (el) el.textContent = val; }
+            set('cost-today',       fmt(usage.today?.cost_usd));
+            set('cost-today-calls', `${usage.today?.calls ?? 0} calls`);
+            set('cost-week',        fmt(usage.week?.cost_usd));
+            set('cost-week-calls',  `${usage.week?.calls ?? 0} calls`);
+            set('cost-month',       fmt(usage.month?.cost_usd));
+            set('cost-month-calls', `${usage.month?.calls ?? 0} calls`);
+        }
+
+        const POLICY_OPTIONS  = [['auto','Auto (local first)'],['local-first','Local First'],['cloud-first','Cloud First'],['cloud-only','Cloud Only']];
+        const CEILING_OPTIONS = [['fast','Fast (haiku)'],['balanced','Balanced (sonnet)'],['deep','Deep (opus)']];
+
+        function makeSelect(id, options, currentVal) {
+            return `<select id="${id}">${options.map(([v,l]) =>
+                `<option value="${v}"${v === currentVal ? ' selected' : ''}>${l}</option>`
+            ).join('')}</select>`;
+        }
+
+        function renderConfigRows(cfg) {
+            const gCfg = cfg.global || {};
+            document.getElementById('cfg-global-policy').value  = gCfg.policy  || 'auto';
+            document.getElementById('cfg-global-ceiling').value = gCfg.ceiling || 'deep';
+            const container = document.getElementById('persona-config-rows');
+            container.innerHTML = PERSONAS.map(p => {
+                const pCfg = cfg[p.key] || {};
+                return `<div class="settings-row" style="margin-top:4px;">
+                    <label>${p.emoji} ${p.name}</label>
+                    ${makeSelect('cfg-' + p.key + '-policy',  POLICY_OPTIONS,  pCfg.policy  || '')}
+                    ${makeSelect('cfg-' + p.key + '-ceiling', CEILING_OPTIONS, pCfg.ceiling || '')}
+                </div>`;
+            }).join('');
+        }
+
+        $settingsSave.addEventListener('click', async () => {
+            $settingsSave.disabled = true;
+            $settingsStatus.textContent = 'Saving…';
+            try {
+                const payload = [{
+                    key:     'global',
+                    policy:  document.getElementById('cfg-global-policy')?.value  || 'auto',
+                    ceiling: document.getElementById('cfg-global-ceiling')?.value || 'deep',
+                }];
+                for (const p of PERSONAS) {
+                    const pol  = document.getElementById('cfg-' + p.key + '-policy')?.value;
+                    const ceil = document.getElementById('cfg-' + p.key + '-ceiling')?.value;
+                    if (pol) payload.push({ key: p.key, policy: pol, ceiling: ceil || 'deep' });
+                }
+                const res = await fetch('/api/models/config', {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload),
+                });
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.error || res.statusText);
+                $settingsStatus.textContent = `✓ Saved ${data.updated} entries`;
+                setTimeout(() => { $settingsStatus.textContent = ''; }, 3000);
+            } catch (err) {
+                $settingsStatus.textContent = `Error: ${err.message}`;
+            } finally {
+                $settingsSave.disabled = false;
+            }
+        });
 
     </script>
 </body>

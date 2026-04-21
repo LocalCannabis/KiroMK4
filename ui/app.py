@@ -35,13 +35,14 @@ from config import (
     DATABASE_URL,
     FLASK_PORT,
     LLM_CONFIG,
+    LOCAL_MODEL_CONFIG,
     MODEL_ROUTING,
     PERSONA_ORDER,
     PERSONAS,
     PROJECT_ROOT,
     SECRET_KEY,
 )
-from models import ChatMessage, ChatSession, db
+from models import ChatMessage, ChatSession, KiroApiToken, ModelConfig, LLMUsageLog, db
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -283,6 +284,39 @@ else:
         "No ANTHROPIC_API_KEY set — UI chat will use OpenAI fallback (%s)",
         LLM_CONFIG.get("model", "gpt-4o"),
     )
+
+
+# ---------------------------------------------------------------------------
+# Model router (triage: local GPU → cloud-fast → cloud-balanced → cloud-deep)
+# ---------------------------------------------------------------------------
+from model_router import ModelRouter, estimate_cost   # noqa: E402 (after clients init)
+model_router = ModelRouter(routing_cfg=MODEL_ROUTING, local_cfg=LOCAL_MODEL_CONFIG)
+log.info(
+    "ModelRouter ready — local=%s",
+    "enabled" if LOCAL_MODEL_CONFIG.get("enabled") else "disabled",
+)
+
+_local_llm_client: Optional[OpenAI] = None
+
+
+def _get_local_client(base_url: str) -> OpenAI:
+    """Lazy-init a shared OpenAI-compat client for Ollama."""
+    global _local_llm_client
+    if _local_llm_client is None:
+        _local_llm_client = OpenAI(base_url=base_url, api_key="ollama")
+    return _local_llm_client
+
+
+def _client_for_route(route: Dict[str, Any]):
+    """
+    Return (client, provider_str) ready to call, based on a model_router result.
+    """
+    p = route["provider"]
+    if p == "local":
+        return _get_local_client(route["base_url"]), "local"
+    if p == "anthropic" and _routed_client is not None:
+        return _routed_client, "anthropic"
+    return llm_client, "openai"
 
 
 # ---------------------------------------------------------------------------
@@ -821,10 +855,11 @@ def api_chat():
         llm_messages.append({"role": msg.role, "content": msg.content})
 
     # Route to appropriate model tier based on query complexity
-    tier = _classify_complexity(user_content, len(history), persona_key)
-    selected_model = _get_model_for_tier(tier)
-    chat_client, provider = _get_chat_client()
-    log.info("[%s] tier=%s model=%s provider=%s", persona_key, tier, selected_model, provider)
+    tier_hint = _classify_complexity(user_content, len(history), persona_key)
+    route = model_router.route(tier_hint, persona_key)
+    selected_model = route["model"]
+    chat_client, provider = _client_for_route(route)
+    log.info("[%s] tier=%s model=%s provider=%s reason=%s", persona_key, route["tier"], selected_model, provider, route.get("reason", ""))
 
     # Get real tool schemas + executor for this persona
     tool_schemas, tool_executor = get_persona_tools(persona_key)
@@ -836,9 +871,19 @@ def api_chat():
         Streams the LLM response token-by-token. If the model requests
         tool calls, we execute them and do a second streaming pass with
         the tool results — same one-round-trip pattern as the voice loop.
+
+        SSE events:
+          {"route_info": {...}}          — first event, routing decision
+          {"token": "..."}               — streamed text chunks
+          {"done": true, "message_id": n, "usage": {...}}  — final event
         """
         full_response: List[str] = []
         t0 = time.perf_counter()
+        tokens_in = 0
+        tokens_out = 0
+
+        # Emit routing decision as the very first event
+        yield f"data: {json.dumps({'route_info': {'model': selected_model, 'tier': route['tier'], 'provider': provider, 'reason': route.get('reason', '')}})}\n\n"
 
         try:
             # --- First LLM call (may include tools) ---
@@ -874,6 +919,9 @@ def api_chat():
                         full_response.append(text)
                         yield f"data: {json.dumps({'token': text})}\n\n"
                     final_msg = stream.get_final_message()
+                    if hasattr(final_msg, "usage") and final_msg.usage:
+                        tokens_in  += final_msg.usage.input_tokens  or 0
+                        tokens_out += final_msg.usage.output_tokens or 0
 
                 # Check for tool use blocks
                 tool_use_blocks = [
@@ -910,17 +958,23 @@ def api_chat():
                         for text in stream2.text_stream:
                             full_response.append(text)
                             yield f"data: {json.dumps({'token': text})}\n\n"
+                        fm2 = stream2.get_final_message()
+                        if hasattr(fm2, "usage") and fm2.usage:
+                            tokens_in  += fm2.usage.input_tokens  or 0
+                            tokens_out += fm2.usage.output_tokens or 0
 
             else:
-                # OpenAI-compatible path (fallback)
+                # OpenAI-compatible path (OpenAI fallback OR local Ollama)
                 kwargs: Dict[str, Any] = dict(
                     model=selected_model,
                     temperature=temp,
                     max_tokens=4096,
                     stream=True,
+                    stream_options={"include_usage": True},
                     messages=llm_messages,
                 )
-                if tool_schemas:
+                local_tools_ok = LOCAL_MODEL_CONFIG.get("tools_supported", True)
+                if tool_schemas and (provider != "local" or local_tools_ok):
                     kwargs["tools"] = tool_schemas
                     kwargs["tool_choice"] = "auto"
 
@@ -928,7 +982,13 @@ def api_chat():
                 tool_calls_acc: Dict[int, Dict[str, str]] = {}
 
                 for chunk in stream:
-                    choice = chunk.choices[0]
+                    if chunk.usage:
+                        tokens_in  += chunk.usage.prompt_tokens     or 0
+                        tokens_out += chunk.usage.completion_tokens or 0
+                        continue
+                    choice = chunk.choices[0] if chunk.choices else None
+                    if not choice:
+                        continue
                     delta = choice.delta
                     if delta.tool_calls:
                         for tc in delta.tool_calls:
@@ -970,26 +1030,38 @@ def api_chat():
                         temperature=temp,
                         max_tokens=4096,
                         stream=True,
+                        stream_options={"include_usage": True},
                         messages=llm_messages,
                     )
                     for chunk in stream2:
-                        content = chunk.choices[0].delta.content or ""
+                        if chunk.usage:
+                            tokens_in  += chunk.usage.prompt_tokens     or 0
+                            tokens_out += chunk.usage.completion_tokens or 0
+                            continue
+                        content = chunk.choices[0].delta.content or "" if chunk.choices else ""
                         if content:
                             full_response.append(content)
                             yield f"data: {json.dumps({'token': content})}\n\n"
 
             latency = (time.perf_counter() - t0) * 1000
+
+            # Estimate tokens from char count when API didn't report them
+            if tokens_in == 0 and tokens_out == 0:
+                chars_in = sum(len(m.get("content", "") or "") for m in llm_messages if isinstance(m.get("content"), str))
+                tokens_in  = max(1, chars_in // 4)
+                tokens_out = max(1, sum(len(t) for t in full_response) // 4)
+
             log.info(
-                "[%s] Response complete — %.0fms, %d chars",
-                persona_key,
-                latency,
-                sum(len(t) for t in full_response),
+                "[%s] Response complete — %.0fms  %d in / %d out tokens  model=%s",
+                persona_key, latency, tokens_in, tokens_out, selected_model,
             )
 
         except Exception as exc:
             error_text = f"[Error: {exc}]"
             log.error("LLM stream error: %s", exc, exc_info=True)
             full_response.append(error_text)
+            latency = (time.perf_counter() - t0) * 1000
+            tokens_in = tokens_out = 0
             yield f"data: {json.dumps({'token': error_text})}\n\n"
 
         # Save complete assistant message to DB
@@ -1004,7 +1076,28 @@ def api_chat():
                 db.session.add(assistant_msg)
                 session.updated_at = datetime.now(timezone.utc)
                 db.session.commit()
-                yield f"data: {json.dumps({'done': True, 'message_id': assistant_msg.id})}\n\n"
+
+                # Log usage
+                try:
+                    cost = estimate_cost(tokens_in, tokens_out, selected_model)
+                    usage_entry = LLMUsageLog(
+                        persona_key=persona_key,
+                        session_id=session_id,
+                        provider=provider,
+                        model=selected_model,
+                        tier=route["tier"],
+                        tokens_in=tokens_in,
+                        tokens_out=tokens_out,
+                        cost_usd=cost,
+                        latency_ms=int(latency),
+                        source="chat",
+                    )
+                    db.session.add(usage_entry)
+                    db.session.commit()
+                except Exception as log_exc:
+                    log.warning("Failed to log LLM usage: %s", log_exc)
+
+                yield f"data: {json.dumps({'done': True, 'message_id': assistant_msg.id, 'usage': {'tokens_in': tokens_in, 'tokens_out': tokens_out, 'cost_usd': estimate_cost(tokens_in, tokens_out, selected_model), 'model': selected_model, 'tier': route['tier']}})}\n\n"
 
     return Response(
         stream_with_context(generate()),

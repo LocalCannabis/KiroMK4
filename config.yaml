@@ -93,6 +93,20 @@ ai:
   llama_cpp:
     model_path: ./models/llm/llama-3.1-8b-instruct-q4_k_m.gguf
 
+  # ---------------------------------------------------------------------------
+  # Local model routing — Ollama on Beast GPU (zero API cost)
+  # Install models:  ollama pull llama3.2:3b-instruct-q4_K_M
+  #                  ollama pull qwen2.5:14b-instruct-q4_K_M
+  # ---------------------------------------------------------------------------
+  local:
+    enabled: true
+    base_url: http://127.0.0.1:11434
+    health_check_interval_s: 30
+    tools_supported: true       # Llama 3.2+ and Qwen 2.5 support tool calling
+    models:
+      fast:    llama3.2:3b-instruct-q4_K_M    # ~1-2s on RTX 3060, simple Q&A
+      capable: qwen2.5:14b-instruct-q4_K_M    # ~5-10s on RTX 3060, medium tasks
+
 tts:
   # Primary engine: kokoro (82M-param, 54 voices, 24kHz, Apache 2.0)
   # Fallback engine: piper (offline, Pi-safe, 22050Hz)

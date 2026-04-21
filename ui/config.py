@@ -127,6 +127,43 @@ def _load_routing_config() -> Dict[str, Any]:
 
 MODEL_ROUTING = _load_routing_config()
 
+
+def _load_local_config() -> Dict[str, Any]:
+    """
+    Load local Ollama routing config from config.yaml ai.local.
+
+    Returns a dict with:
+      enabled, base_url, models: {fast, capable},
+      health_check_interval_s, tools_supported
+    """
+    cfg_path = PROJECT_ROOT / "config.yaml"
+    defaults: Dict[str, Any] = {
+        "enabled":                 False,
+        "base_url":                "http://127.0.0.1:11434",
+        "models": {
+            "fast":    "llama3.2:3b-instruct-q4_K_M",
+            "capable": "qwen2.5:14b-instruct-q4_K_M",
+        },
+        "health_check_interval_s": 30,
+        "tools_supported":         True,
+    }
+    if cfg_path.exists():
+        try:
+            with open(cfg_path, encoding="utf-8") as f:
+                full = yaml.safe_load(f) or {}
+            local = full.get("ai", {}).get("local", {})
+            for k in ("enabled", "base_url", "health_check_interval_s", "tools_supported"):
+                if k in local:
+                    defaults[k] = local[k]
+            if "models" in local:
+                defaults["models"].update(local["models"])
+        except Exception:
+            pass
+    return defaults
+
+
+LOCAL_MODEL_CONFIG = _load_local_config()
+
 # ---------------------------------------------------------------------------
 # App settings
 # ---------------------------------------------------------------------------
